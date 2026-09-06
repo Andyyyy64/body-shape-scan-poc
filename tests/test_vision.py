@@ -216,6 +216,24 @@ class VisionTests(unittest.TestCase):
                 read_json(root / "record" / "capture.json")["source_kind"], "synthetic"
             )
 
+    def test_sample_video_without_trusting_index_metadata(self):
+        from body_scan.vision import libraries, sampled_video_frames
+
+        cv2, np = libraries()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "synthetic.avi"
+            writer = cv2.VideoWriter(
+                str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10.0, (160, 120)
+            )
+            for i in range(11):
+                writer.write(np.full((120, 160, 3), i * 20, np.uint8))
+            writer.release()
+            frames, count = sampled_video_frames(str(path), 3)
+            self.assertEqual(count, 11)
+            self.assertEqual([i for i, _ in frames], [0, 5, 10])
+            with self.assertRaises(ValueError):
+                sampled_video_frames(str(path), 3, max_frames=5)
+
     def test_camera_invalid_matrix(self):
         from body_scan.vision import camera
 

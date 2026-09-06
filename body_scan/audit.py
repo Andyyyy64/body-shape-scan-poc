@@ -13,6 +13,8 @@ ALLOWED_ROOT = {
     ".gitignore",
     "LICENSE",
     "AGENTS.md",
+    "body_scan/ui.html",
+    "body_scan/runtime-requirements.txt",
 }
 
 

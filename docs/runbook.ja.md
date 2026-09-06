@@ -1,15 +1,43 @@
 # ローカル実行手順
 
-## この版で動くこと
+## 撮影から3D比較まで
 
-- CPUで、既知形状・既知変化・尺度誤差・固定形状対照と検出力を検証する。
-- 非公開のペア計測データを読み、方式・部位・端末・測定定義ごとの探索的レポートを作る。
-- ローカルカメラの録画、動画からのフレーム抽出、チェスボード内部校正、歪み補正。
-- 明示的に用意したYOLO segmentation重みから、観測された1人分のマスクを作る。
-- **マスクとmetric body-to-camera poseが既にある場合**、透視投影を用いるvisual hullの断面を復元する。
-- CUDA環境と公式重みがある場合のSAM単画像初期推定を保存する接続コード。
+1. `serve`で表示されたローカルURLを開く。
+2. 「カメラを準備」でMacの内蔵カメラを選ぶ。
+3. 撮影時間を設定し、「5秒後に撮影開始」で通常の呼吸のままゆっくり一周する。
+4. 保存した撮影の「3Dに復元」を押す。処理は1件ずつ実行する。
+5. 完了した撮影をクリックすると、原動画と1回分の3Dを確認できる。
+6. 2回目も別に撮影・復元し、基準と比較対象を選んで「差分を計算」を押す。
 
-**自動で回転角・身体位置・実寸を解決する人体スキャナではない。MHRの多視点共同最適化、metric round trip、実人物の精度は未完了。** 現在の`reconstruct`は、推定済み/計測済みのposeを入力する断面方式の比較用ツールで、MHR方式の代用品として合格扱いにはしない。
+同じ姿勢・服装・距離で撮り直し、まず日内のばらつきを調べる。日付によるゼロ補正や、前回の体型をそのまま返す処理はない。許容幅は任意の手動設定で、検証済みの生理的変化の閾値ではない。
+
+画面では対応点のモデル上の差と固定断面の周囲長差を表示する。実SAMの指標は、基準で決めた胴体の頂点だけを使う。画面外の脚などはモデルによる補完を含み、測定対象ではない。実寸の独立校正は未完了なので単位は`モデルmm`である。
+
+## Macランタイムを準備する
+
+Hugging Faceの`facebook/sam-3d-body-dinov3`へのアクセス承認とCLIログインを済ませる。トークンをGitやチャットへ保存しない。
+
+```bash
+uv sync --locked --extra vision --python 3.11
+uv run body-scan setup-mac --out "$HOME/body-scan-private/runtime"
+uv run body-scan doctor --runtime-config "$HOME/body-scan-private/runtime/config.json"
+uv run body-scan serve --data-root "$HOME/body-scan-private/scans" \
+  --runtime-config "$HOME/body-scan-private/runtime/config.json"
+```
+
+`setup-mac`は新しいディレクトリ専用。すでにランタイムがある場合は再インストールせず`serve`を使う。モデル約2.8GBと依存を取得し、固定revisionの公式SAM/DINOコードを配置する。GPU・CPUを自動で切り替えず、DINO画像エンコーダーをMPS/float16、デコーダーとMHRをCPUで実行する。必要なdevice指定・ローカルsource指定・mmap読み込みの変更は、期待したソースだけに適用し、不一致なら失敗する。
+
+推論時の外部通信は`macOS sandbox-exec`で遮断する。動画・マスク・meshを外へ送らない。RAM使用量と空きメモリを監視し、上限に達したら元動画を残して停止する。設定値は非公開の`config.json`にある。ほかの重い処理を同時に増やさない。
+
+## 現在の復元方式と検証範囲
+
+動画を実際にデコードしてフレーム数を数え、既定では16枚を選ぶ。ブラウザ録画のシーク情報やFPSだけに依存しない。各フレームでYOLOの人物マスクとSAM 3D Bodyの推定を得て、粗い向きの区間ごとに重みを揃え、shape係数を集約する。
+
+1回目に骨格スケール、正準姿勢の断面位置、胴体の対象頂点を記録し、その後の撮影で共有する。体型のshape係数は各撮影で独立に求める。MHRを同じ姿勢で再生成し、同じ頂点同士を比較する。任意の拡大縮小や非剛体位置合わせで差を消さない。
+
+この方法は`sam_parameter_ensemble`。実際の全方向の輪郭へMHRを共同最適化する方式は、今後の比較対象として残っている。向きが不足した場合は警告し、同じ原動画からの再処理も区別する。比較値を脂肪・筋肉の変化とは断定しない。
+
+実モデルについて確認したのは、公開サンプルでの推論、SAMの完全なMHRパラメータからの頂点再生成、公開画像由来の同じ動画を2回処理する接続試験。本人の独立した一周撮影や、1cmの実変化に対する精度は未検証。
 
 ## インストール
 
@@ -28,7 +56,7 @@ python3 -m body_scan --help
 python3 -m body_scan power --sigma-m 0.0025 --delta-m 0.01
 ```
 
-`doctor`の`sam_ready: false`はSAMの環境が揃っていないことを表す。CPUデモの可否とは別。
+`doctor --runtime-config ...`で外部モデル環境を確認する。引数なしの`doctor`は軽量なベース環境だけを診断する。
 
 ## まず合成データで動作を確認する
 
@@ -122,20 +150,6 @@ uv run body-scan reconstruct "$SCAN_DATA_ROOT/render-before-01/scan.json" \
 body座標ではyが上、camera座標ではxが右・yが下・zが前。原点は測定定義と一緒に固定する。未知のposeや尺度をテンプレートへ推測で埋めない。尺度の証拠IDがない場合は`unscaled`、整合する断面がない場合は`missing`。画面・復元境界で切れた断面も欠測になる。
 
 得られる周長は胴体seedに連結した領域の**凸包**。皮膚の凹部に沿う周長とは異なる。手足と胴体が連結する高さは人手で測定定義を確認する。離散化誤差は不確かさの実測値ではなく、`uncertainty_m`は未検証の間null。
-
-## SAM初期推定（別のCUDA環境）
-
-公式のSAM環境を構築し、その環境へこのpackageをインストールしてから使う。PyTorchやモデル依存は通常のCPU環境へ自動で追加しない。公式checkpoint、隣接するmodel_config.yaml、MHRモデルを用意する。
-
-```bash
-python -m body_scan sam-init "$SCAN_DATA_ROOT/sam-input/scan.json" \
-  --source "$SAM_SOURCE" --checkpoint "$SAM_CHECKPOINT" --mhr-model "$MHR_MODEL" \
-  --out "$SCAN_DATA_ROOT/sam-initialization-01"
-```
-
-各viewに補正済みRGBの`image`と同じ座標の`mask`を指定し、歪み係数はゼロ、Kは補正後のものにする。SAMの初期化にはまだR/tがなくてもよいが、それをmetric再構成が可能という意味にはしない。
-
-完全な公式出力をNPZへ保存し、source commitと重みhashを記録する。出力は`initialized_not_metric_validated`。MHR再生成・単位変換のround tripと共同最適化はこのコマンドに含まれない。実GPUでの推論検証は未実施。信頼できる公式重みだけを使用する。
 
 ## ペアの実測比較
 

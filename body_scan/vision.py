@@ -526,3 +526,41 @@ def undistort(images: str, calibration: str, output: str) -> dict:
         },
     )
     return {"status": "undistorted_not_measured", "frames": len(records)}
+
+
+def sampled_video_frames(video_path: str, samples: int, max_frames: int = 3600):
+    """Count by decoding, then sample sequentially; MediaRecorder files may lack seek indexes."""
+    cv2, np = libraries()
+    if not Path(video_path).is_file() or not 3 <= samples <= 64:
+        raise InputError("Use a local video and 3..64 samples")
+    cap = cv2.VideoCapture(video_path)
+    count = 0
+    try:
+        if not cap.isOpened():
+            raise InputError("Saved video could not be decoded")
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            count += 1
+            if count > max_frames:
+                raise InputError("Video exceeds the bounded scan length")
+    finally:
+        cap.release()
+    if count < 3:
+        raise InputError("At least three video frames are required")
+    selected = set(np.linspace(0, count - 1, min(samples, count), dtype=int).tolist())
+    cap = cv2.VideoCapture(video_path)
+    result = []
+    try:
+        for index in range(count):
+            ok, frame = cap.read()
+            if not ok:
+                raise InputError(
+                    "Video changed or became unreadable between decoding passes"
+                )
+            if index in selected:
+                result.append((index, frame))
+    finally:
+        cap.release()
+    return result, count

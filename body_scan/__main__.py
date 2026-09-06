@@ -19,9 +19,11 @@ def main() -> int:
         description="Local body-shape research workbench; no physical accuracy established"
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser(
-        "doctor", help="Report available optional dependencies without loading models"
+    p = sub.add_parser(
+        "doctor",
+        help="Inspect the base environment and an optional external Mac runtime",
     )
+    p.add_argument("--runtime-config")
     for name in ("demo", "render-demo"):
         p = sub.add_parser(name, help="Run explicitly synthetic experiments")
         p.add_argument("--out", required=True)
@@ -98,16 +100,30 @@ def main() -> int:
     p.add_argument("manifest")
     p.add_argument("--out", required=True)
     p = sub.add_parser(
-        "sam-init",
-        help="Optional official CUDA initialization; no joint fitting or accuracy claim",
-    )
-    p.add_argument("manifest")
-    for flag in ("source", "checkpoint", "mhr-model", "out"):
-        p.add_argument("--" + flag, required=True)
-    p = sub.add_parser(
         "template",
         help="Create incomplete private input contracts; no invented calibration",
     )
+    p.add_argument("--out", required=True)
+    p = sub.add_parser(
+        "setup-mac",
+        help="Install the pinned official SAM Mac runtime after model access approval",
+    )
+    p.add_argument("--out", required=True)
+    p.add_argument("--frames", type=int, default=16)
+    p = sub.add_parser(
+        "serve",
+        help="Open a private loopback capture and canonical 3D comparison screen",
+    )
+    p.add_argument("--data-root", required=True)
+    p.add_argument("--port", type=int, default=0)
+    p.add_argument("--runtime-config")
+    p = sub.add_parser(
+        "compare-meshes",
+        help="Compare matching canonical meshes without date-based suppression",
+    )
+    p.add_argument("before")
+    p.add_argument("after")
+    p.add_argument("--tolerance-mm", type=float)
     p.add_argument("--out", required=True)
     p = sub.add_parser(
         "audit", help="Audit public tracked files and optionally every commit"
@@ -116,7 +132,33 @@ def main() -> int:
     p.add_argument("--history", action="store_true")
     args = parser.parse_args()
     try:
-        if args.command == "doctor":
+        if args.command == "setup-mac":
+            from .runtime_setup import setup
+
+            result = setup(args.out, args.frames)
+        elif args.command == "serve":
+            from .web import serve
+
+            if not 0 <= args.port <= 65535:
+                raise InputError("Invalid local port")
+            serve(args.data_root, args.port, args.runtime_config)
+            return 0
+        elif args.command == "compare-meshes":
+            from .mesh import compare_meshes
+
+            result = compare_meshes(
+                read_json(args.before), read_json(args.after), args.tolerance_mm
+            )
+            root = new_run(args.out)
+            write_json(root / "comparison.json", result)
+            from .demo import html_report
+
+            html_report(root, result)
+            result = {
+                "status": "comparison_written",
+                "physical_accuracy_validated": False,
+            }
+        elif args.command == "doctor":
             modules = {
                 name: importlib.util.find_spec(name) is not None
                 for name in ["numpy", "cv2", "torch", "ultralytics", "sam_3d_body"]
@@ -130,10 +172,41 @@ def main() -> int:
                 "python": sys.version.split()[0],
                 "modules": modules,
                 "cuda_available": cuda,
-                "sam_ready": cuda and modules["sam_3d_body"],
+                "external_runtime": "not_checked",
                 "physical_accuracy_validated": False,
                 "network_upload": False,
             }
+            if args.runtime_config:
+                import subprocess
+
+                config = read_json(args.runtime_config)
+                present = all(
+                    Path(config[k]).exists()
+                    for k in [
+                        "python",
+                        "sam_source",
+                        "dino_source",
+                        "checkpoint",
+                        "mhr_model",
+                        "segmentation_model",
+                    ]
+                )
+                probe = subprocess.run(
+                    [
+                        config["python"],
+                        "-c",
+                        "import json,torch; print(json.dumps({'mps_available':torch.backends.mps.is_available()}))",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                result["external_runtime"] = {
+                    "model_files_present": present,
+                    "encoder_device": config["encoder_device"],
+                    **json.loads(probe.stdout),
+                    "network_sandbox": config.get("network_sandbox"),
+                }
         elif args.command in ("demo", "render-demo"):
             from .demo import render_demo, run_demo
 
@@ -220,12 +293,6 @@ def main() -> int:
             from .audit import audit
 
             result = audit(args.staged, args.history)
-        elif args.command == "sam-init":
-            from .sam import initialize
-
-            result = initialize(
-                args.manifest, args.source, args.checkpoint, args.mhr_model, args.out
-            )
         else:
             from . import vision
 

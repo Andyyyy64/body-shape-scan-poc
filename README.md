@@ -1,24 +1,37 @@
 # Body Shape Scan PoC
 
-A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. The executable local workbench covers synthetic experiments, exploratory paired analysis, capture/calibration utilities, and cross-sections from supplied metric poses and silhouettes. It is not an automatic validated human scanner.
+A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. The local operator screen records video, runs SAM 3D Body, generates a canonical mesh, and compares saved scans. Measurement accuracy is not established.
 
 **Primary question:** can independent captures detect a real 1 cm change in a defined abdominal or hip circumference, while keeping false change reports acceptably low?
 
 日本語の詳細な実験範囲は [PoC scope](docs/poc-scope.ja.md) を参照してください。
 
-## Run locally
+## Run on an Apple Silicon Mac
+
+The operator screen now supports recording or importing a video, running local SAM inference, viewing a canonical 3D body, and comparing two saved reconstructions.
 
 ```bash
 uv sync --locked --extra vision --python 3.11
-uv run body-scan doctor
-uv run python -m unittest discover -v
-uv run body-scan demo --out "$HOME/body-scan-private/numeric-01"
-uv run body-scan render-demo --out "$HOME/body-scan-private/render-01"
+# One-time installation on a fresh machine; requires approved Hugging Face model access and CLI login.
+uv run body-scan setup-mac --out "$HOME/body-scan-private/runtime"
+# If the runtime is already installed, run only this command:
+uv run body-scan serve --data-root "$HOME/body-scan-private/scans" \
+  --runtime-config "$HOME/body-scan-private/runtime/config.json"
 ```
 
-Use a new output directory outside **every Git checkout**. The standard-library numerical tools also run with `python3 -m body_scan`. Reports remain private. [Runnable instructions and input contracts](docs/runbook.ja.md).
+Open the loopback URL printed by `serve`. All videos, meshes, profiles, comparisons, weights and runtime logs stay outside Git. The inference subprocess runs with macOS network access denied. There is no cloud inference or automatic device fallback.
 
-Metric cross-section reconstruction currently requires **supplied calibrated body-to-camera poses and independent scale evidence**. Recording a video does not automatically supply these. SAM initialization is an optional CUDA adapter; full MHR joint optimization and physical human validation are not implemented/established by this release.
+Reconstruction is the **independent-image SAM parameter-ensemble baseline**: sample frames, segment one person, estimate shape per frame, balance coarse orientation bins, aggregate shape, and generate a canonical MHR mesh. The first scan establishes shared skeleton scales and fixed torso measurement locations; later scans estimate their own shape. Multi-view silhouette optimization remains a separate research gate.
+
+The screen reports **model-space** geometry differences, not proven biological changes. Dates never force differences to zero. Reusing the same video is flagged as a duplicate input, not counted as independent repeatability evidence. [Detailed usage and limitations](docs/runbook.ja.md).
+
+Numerical tools remain available without model weights:
+
+```bash
+uv run body-scan demo --out "$HOME/body-scan-private/numeric-01"
+uv run body-scan render-demo --out "$HOME/body-scan-private/render-01"
+uv run python -m unittest discover -v
+```
 
 ## Selected scope
 
@@ -68,7 +81,9 @@ Dependencies' code, model weights, and datasets have separate terms. This reposi
 
 ## Current evidence
 
-Numerical and synthetic-image round-trip checks are executable. Local video capture/extraction and camera calibration/undistortion have synthetic integration checks. Actual webcam captures, YOLO/SAM inference, MHR joint fitting, and longitudinal human accuracy remain unverified. No human accuracy or GPU-memory claim is made. Live progress and blockers are tracked in GitHub Issues.
+The numerical, privacy, local API and synthetic-image tests are executable. On the development Mac, official SAM inference and the MHR full-parameter round trip were executed. The browser-to-video-to-SAM-to-canonical-mesh-to-comparison path was exercised with a public-reference-image test video. Repeated processing of that identical video produced identical geometry and was explicitly flagged as duplicate input.
+
+This is **not** evidence from an independent human rotation capture or a longitudinal body-change trial. Real camera operation, rotation quality and repeatability still require participant testing. Full multi-view silhouette fitting and confirmatory human validation remain open. GitHub Issues track progress and blockers.
 
 ## Primary sources
 
