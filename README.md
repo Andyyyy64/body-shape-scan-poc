@@ -1,10 +1,24 @@
 # Body Shape Scan PoC
 
-A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. This repository starts with a validation plan, not an implemented scanner or a demonstrated accuracy claim.
+A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. The executable local workbench covers synthetic experiments, exploratory paired analysis, capture/calibration utilities, and cross-sections from supplied metric poses and silhouettes. It is not an automatic validated human scanner.
 
 **Primary question:** can independent captures detect a real 1 cm change in a defined abdominal or hip circumference, while keeping false change reports acceptably low?
 
 日本語の詳細な実験範囲は [PoC scope](docs/poc-scope.ja.md) を参照してください。
+
+## Run locally
+
+```bash
+uv sync --locked --extra vision --python 3.11
+uv run body-scan doctor
+uv run python -m unittest discover -v
+uv run body-scan demo --out "$HOME/body-scan-private/numeric-01"
+uv run body-scan render-demo --out "$HOME/body-scan-private/render-01"
+```
+
+Use a new output directory outside **every Git checkout**. The standard-library numerical tools also run with `python3 -m body_scan`. Reports remain private. [Runnable instructions and input contracts](docs/runbook.ja.md).
+
+Metric cross-section reconstruction currently requires **supplied calibrated body-to-camera poses and independent scale evidence**. Recording a video does not automatically supply these. SAM initialization is an optional CUDA adapter; full MHR joint optimization and physical human validation are not implemented/established by this release.
 
 ## Selected scope
 
@@ -54,7 +68,7 @@ Dependencies' code, model weights, and datasets have separate terms. This reposi
 
 ## Current evidence
 
-Scope selection is complete. Implementation and experiments have not started. No physical accuracy, runtime, or GPU-memory result has been measured in this repository. Live progress and blockers are tracked in GitHub Issues.
+Numerical and synthetic-image round-trip checks are executable. Local video capture/extraction and camera calibration/undistortion have synthetic integration checks. Actual webcam captures, YOLO/SAM inference, MHR joint fitting, and longitudinal human accuracy remain unverified. No human accuracy or GPU-memory claim is made. Live progress and blockers are tracked in GitHub Issues.
 
 ## Primary sources
 
