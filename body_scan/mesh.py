@@ -147,6 +147,8 @@ def compare_meshes(
 ) -> dict:
     validate_mesh(before)
     validate_mesh(after)
+    if before.get("method") != after.get("method"):
+        raise InputError("Compare reconstructions produced by the same method")
     for key in (
         "source_kind",
         "units",
