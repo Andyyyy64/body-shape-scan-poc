@@ -1,0 +1,20 @@
+name: Synthetic verification
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          enable-cache: false
+      - run: uv sync --locked --extra vision --python 3.11
+      - run: uv run ruff check body_scan tests && uv run ruff format --check body_scan tests
+      - run: uv run python -m unittest discover -v
+      - run: uv run body-scan audit --history
+      # Never upload captures, reports, logs, meshes, or runtime artifacts.

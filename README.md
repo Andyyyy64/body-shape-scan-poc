@@ -1,10 +1,37 @@
 # Body Shape Scan PoC
 
-A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. This repository starts with a validation plan, not an implemented scanner or a demonstrated accuracy claim.
+A research project testing whether a fixed laptop RGB camera and a short self-rotation capture can measure longitudinal changes in external body shape. The local operator screen records video, runs SAM 3D Body, generates a canonical mesh, and compares saved scans. Measurement accuracy is not established.
 
 **Primary question:** can independent captures detect a real 1 cm change in a defined abdominal or hip circumference, while keeping false change reports acceptably low?
 
 日本語の詳細な実験範囲は [PoC scope](docs/poc-scope.ja.md) を参照してください。
+
+## Run on an Apple Silicon Mac
+
+The operator screen now supports recording or importing a video, running local SAM inference, viewing a canonical 3D body, and comparing two saved reconstructions.
+
+```bash
+uv sync --locked --extra vision --python 3.11
+# One-time installation on a fresh machine; requires approved Hugging Face model access and CLI login.
+uv run body-scan setup-mac --out "$HOME/body-scan-private/runtime"
+# If the runtime is already installed, run only this command:
+uv run body-scan serve --data-root "$HOME/body-scan-private/scans" \
+  --runtime-config "$HOME/body-scan-private/runtime/config.json"
+```
+
+Open the loopback URL printed by `serve`. All videos, meshes, profiles, comparisons, weights and runtime logs stay outside Git. The inference subprocess runs with macOS network access denied. There is no cloud inference or automatic device fallback.
+
+Reconstruction is the **shared-shape silhouette fit** (`fixed_pose_silhouette_fit.v1`): sample frames, select the primary person (small secondary detections are ignored, comparable ones reject the frame), estimate pose and shape per frame with SAM 3D Body, exclude frames that violate the capture protocol (head-to-pelvis inside the image, arms hanging below the elbows), initialise one shape from the per-frame median, then optimise that shared shape and per-frame camera translation against every frame's observed silhouette with the per-frame poses fixed. A capture with fewer than 75% usable frames is refused with the reasons. The first scan establishes shared skeleton scales and fixed torso measurement locations; later scans estimate their own shape. Turning speed and path are free; abdominal tension, arm position and framing are the protocol. Full joint pose/camera fitting remains a separate research gate.
+
+The screen reports **model-space** geometry differences, not proven biological changes. Dates never force differences to zero. Reusing the same video is flagged as a duplicate input, not counted as independent repeatability evidence. [Detailed usage and limitations](docs/runbook.ja.md).
+
+Numerical tools remain available without model weights:
+
+```bash
+uv run body-scan demo --out "$HOME/body-scan-private/numeric-01"
+uv run body-scan render-demo --out "$HOME/body-scan-private/render-01"
+uv run python -m unittest discover -v
+```
 
 ## Selected scope
 
@@ -54,7 +81,9 @@ Dependencies' code, model weights, and datasets have separate terms. This reposi
 
 ## Current evidence
 
-Scope selection is complete. Implementation and experiments have not started. No physical accuracy, runtime, or GPU-memory result has been measured in this repository. Live progress and blockers are tracked in GitHub Issues.
+The numerical, privacy, local API and synthetic-image tests are executable. On the development Mac, official SAM inference and the MHR full-parameter round trip were executed. The browser-to-video-to-SAM-to-canonical-mesh-to-comparison path was exercised with a public-reference-image test video. Repeated processing of that identical video produced identical geometry and was explicitly flagged as duplicate input.
+
+A private single-participant short-interval repeatability evaluation was run on the development Mac with held-out captures; its results stay outside this repository pending disclosure review. This is **not** evidence of physical accuracy or of a longitudinal body-change trial, and sensitivity to a known real change is untested. Full multi-view silhouette fitting and confirmatory human validation remain open. GitHub Issues track progress and blockers.
 
 ## Primary sources
 

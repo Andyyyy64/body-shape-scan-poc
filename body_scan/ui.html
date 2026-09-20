@@ -1,0 +1,1153 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Body Scan — Local PoC</title>
+    <style>
+      :root {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        color: #18201f;
+        background: #f5f6f4;
+        font-synthesis: none;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1180px;
+        margin: auto;
+        padding: 28px 24px 64px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      h1 {
+        font-size: 25px;
+        letter-spacing: -0.6px;
+        margin: 0;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 0 0 16px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+      }
+      p {
+        line-height: 1.7;
+      }
+      .muted {
+        color: #62706c;
+        font-size: 13px;
+      }
+      .badge {
+        font-size: 12px;
+        border: 1px solid #c5cdc8;
+        border-radius: 5px;
+        padding: 5px 9px;
+        white-space: nowrap;
+      }
+      .notice {
+        border-left: 3px solid #b4751d;
+        background: #fff7e8;
+        padding: 12px 16px;
+        margin: 22px 0;
+        color: #76501e;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: 20px;
+      }
+      .card {
+        background: white;
+        border: 1px solid #dde2dd;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin: 14px 0;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+        font-size: 14px;
+        border: 1px solid #bcc7c0;
+        border-radius: 5px;
+        padding: 9px 12px;
+        background: white;
+        color: #18201f;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        border-color: #274f42;
+      }
+      button.primary {
+        background: #214f40;
+        border-color: #214f40;
+        color: white;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      input:focus-visible {
+        outline: 3px solid #85b2ef;
+        outline-offset: 2px;
+      }
+      label {
+        font-size: 13px;
+        display: grid;
+        gap: 6px;
+      }
+      input[type="number"] {
+        width: 95px;
+      }
+      .preview {
+        position: relative;
+        background: #17211e;
+        border-radius: 7px;
+        overflow: hidden;
+        aspect-ratio: 16/9;
+        display: grid;
+        place-items: center;
+        color: #d3ddd7;
+      }
+      .preview video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .preview .placeholder {
+        position: absolute;
+        pointer-events: none;
+        font-size: 14px;
+      }
+      .countdown {
+        position: absolute;
+        font-size: 70px;
+        font-weight: 600;
+        color: white;
+        text-shadow: 0 2px 12px #000;
+        pointer-events: none;
+      }
+      #status {
+        min-height: 25px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      #sessions {
+        max-height: 340px;
+        overflow: auto;
+        display: grid;
+        gap: 8px;
+      }
+      .session {
+        display: flex;
+        text-align: left;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        width: 100%;
+        background: #fafbf9;
+      }
+      .session-view {
+        flex: 1;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        padding: 0;
+      }
+      .session small {
+        display: block;
+        color: #69716e;
+        margin-top: 4px;
+        font-size: 12px;
+      }
+      .synthetic {
+        color: #8c620d;
+        font-size: 12px;
+      }
+      .playback {
+        width: 100%;
+        max-height: 260px;
+        background: #111d18;
+        margin-top: 12px;
+        border-radius: 5px;
+      }
+      .compare-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        gap: 12px;
+      }
+      .compare-controls select {
+        max-width: 310px;
+      }
+      .viewers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin: 16px 0;
+      }
+      .viewer {
+        position: relative;
+        background: #13211c;
+        border-radius: 7px;
+        overflow: hidden;
+      }
+      .viewer canvas {
+        display: block;
+        width: 100%;
+        height: 390px;
+        touch-action: none;
+      }
+      .viewer span {
+        position: absolute;
+        top: 12px;
+        left: 14px;
+        color: #d8e5dc;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .metric {
+        padding: 16px;
+        background: #f3f6f2;
+        border-radius: 5px;
+      }
+      .metric small {
+        display: block;
+        font-size: 12px;
+        color: #60716a;
+      }
+      .metric strong {
+        display: block;
+        font-size: 24px;
+        font-variant-numeric: tabular-nums;
+        margin-top: 6px;
+      }
+      .legend {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: #60716a;
+      }
+      .gradient {
+        width: 100px;
+        height: 9px;
+        background: linear-gradient(90deg, #9dc5b1, #f09b51, #d9403a);
+      }
+      #comparisonNote {
+        line-height: 1.7;
+        font-size: 14px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 10px 5px;
+        border-bottom: 1px solid #e1e6e1;
+        font-variant-numeric: tabular-nums;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 18px 14px;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .viewers {
+          gap: 8px;
+        }
+        .viewer canvas {
+          height: 280px;
+        }
+        .metrics {
+          grid-template-columns: 1fr;
+        }
+        .compare-controls label {
+          width: 100%;
+        }
+        .compare-controls select {
+          max-width: 100%;
+          width: 100%;
+        }
+        header {
+          align-items: start;
+        }
+        .card {
+          padding: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Body Scan</h1>
+          <div class="muted">回転撮影と3D比較 · ローカルPoC</div>
+        </div>
+        <span class="badge">このMac内に保存</span>
+      </header>
+      <div class="notice" id="modelNotice">
+        <strong>SAMによる3D復元は未接続です。</strong>
+        撮影・保存と、用意した3Dの比較は使えます。モデル承認後に実推論を接続します。撮影しただけでは3Dは作成されません。
+      </div>
+      <div class="layout">
+        <section class="card">
+          <h2>1. 一周撮影する</h2>
+          <div class="preview">
+            <video id="camera" autoplay muted playsinline hidden></video
+            ><span class="placeholder" id="cameraHint"
+              >カメラを準備すると、ここに映ります</span
+            ><span id="countdown" class="countdown"></span>
+          </div>
+          <div class="controls">
+            <button id="prepare">カメラを準備</button
+            ><button id="off" disabled>カメラを切る</button
+            ><select id="cameraDevice" aria-label="使用するカメラ" disabled>
+              <option>カメラ未選択</option>
+            </select>
+          </div>
+          <div class="controls">
+            <label
+              >撮影時間（秒）<input
+                id="duration"
+                type="number"
+                value="20"
+                min="5"
+                max="60" /></label
+            ><button id="record" class="primary" disabled>
+              5秒後に撮影開始</button
+            ><button id="stop" disabled>停止</button
+            ><button id="upload">既存の動画を保存</button
+            ><input
+              id="videoFile"
+              type="file"
+              accept="video/mp4,video/webm"
+              hidden
+            />
+          </div>
+          <div id="unsaved"></div>
+          <div id="status" role="status" aria-live="polite">
+            カメラは起動していません。
+          </div>
+          <p class="muted">
+            頭・肩・骨盤と、測りたい部位が全方向で映る位置に立ち、通常の呼吸でゆっくり一周してください。音声は録音しません。
+          </p>
+        </section>
+        <section class="card">
+          <h2>2. 保存した撮影</h2>
+          <div id="sessions"><p class="muted">読み込み中…</p></div>
+          <video
+            id="playback"
+            class="playback"
+            controls
+            playsinline
+            hidden
+          ></video>
+          <div class="controls">
+            <button id="refresh">一覧を更新</button
+            ><button id="demo">合成3Dデモを追加</button>
+          </div>
+          <p class="muted">
+            動画・3D・比較結果は公開repoの外へ保存します。合成デモは実撮影とは別に表示します。
+          </p>
+        </section>
+      </div>
+      <section class="card">
+        <h2>3. 2回分の3Dを比較する</h2>
+        <div class="compare-controls">
+          <label
+            >基準<select id="before">
+              <option value="">3Dを選択</option>
+            </select></label
+          ><label
+            >比較対象<select id="after">
+              <option value="">3Dを選択</option>
+            </select></label
+          ><label
+            >任意の許容幅（mm）<input
+              id="tolerance"
+              type="number"
+              min="0.01"
+              step="0.1"
+              placeholder="未設定" /></label
+          ><button id="compare" class="primary" disabled>差分を計算</button>
+        </div>
+        <p class="muted">
+          同じ正準姿勢・座標・尺度・頂点対応の3Dだけを比較します。同日だから差をゼロにする処理はありません。
+        </p>
+        <div class="viewers">
+          <div class="viewer">
+            <span>基準</span
+            ><canvas
+              id="beforeCanvas"
+              tabindex="0"
+              aria-label="基準の3D。矢印キーで回転"
+            ></canvas>
+          </div>
+          <div class="viewer">
+            <span>比較対象 · 差分の大きさ</span
+            ><canvas
+              id="afterCanvas"
+              tabindex="0"
+              aria-label="比較対象の3Dと差分。矢印キーで回転"
+            ></canvas>
+          </div>
+        </div>
+        <div class="legend">
+          <span>ドラッグまたは矢印キーで回転</span>
+          <div class="gradient"></div>
+          <span>小 → 大</span
+          ><label
+            >色の上限
+            <input
+              id="colorLimit"
+              type="number"
+              min="0.1"
+              step="0.1"
+              value="5"
+              aria-label="差分色の上限mm"
+          /></label>
+        </div>
+        <div id="metrics" class="metrics" hidden>
+          <div class="metric">
+            <small>対応点のRMS差</small><strong id="rms"></strong>
+          </div>
+          <div class="metric">
+            <small>95パーセンタイル</small><strong id="p95"></strong>
+          </div>
+          <div class="metric">
+            <small>最大差</small><strong id="maximum"></strong>
+          </div>
+        </div>
+        <p id="comparisonNote" role="status">
+          まず撮影を保存できます。比較の動作は「合成3Dデモを追加」で確認できます。
+        </p>
+        <table id="sections" hidden>
+          <thead>
+            <tr>
+              <th>断面</th>
+              <th>基準</th>
+              <th>比較対象</th>
+              <th>周囲長差</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="muted">
+          同日の撮り直しは再現性の検証です。小さな差があっても脂肪や筋肉の変化とは断定できません。許容幅は手動設定で、実測済みの判定基準ではありません。
+        </p>
+      </section>
+    </main>
+    <script nonce="__SESSION_TOKEN__">
+      const TOKEN = "__SESSION_TOKEN__",
+        $ = (id) => document.getElementById(id);
+      let stream = null,
+        recorder = null,
+        phase = "idle",
+        cancelCountdown = false,
+        playbackURL = null,
+        comparison = null,
+        meshes = null,
+        yaw = 0.25,
+        pitch = 0.1,
+        samConfigured = false,
+        pollTimer = null,
+        playbackSelection = 0;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          ...options,
+          headers: { "X-Scan-Session": TOKEN, ...options.headers },
+        });
+        if (!response.ok) {
+          let message = "処理に失敗しました";
+          try {
+            message = (await response.json()).error || message;
+          } catch {}
+          throw Error(message);
+        }
+        return response;
+      }
+      function state(next, message) {
+        if (next === "ready" && !stream?.active) next = "idle";
+        phase = next;
+        const busy = ["preparing", "countdown", "recording", "saving"].includes(
+          next,
+        );
+        $("prepare").disabled = busy;
+        $("cameraDevice").disabled = busy || !stream;
+        $("off").disabled = busy || !stream;
+        $("record").disabled = next !== "ready";
+        $("stop").disabled = !["countdown", "recording"].includes(next);
+        $("upload").disabled = busy;
+        $("duration").disabled = busy;
+        if (message) $("status").textContent = message;
+      }
+      async function prepare() {
+        state("preparing", "カメラの許可を確認しています…");
+        try {
+          if (stream) stream.getTracks().forEach((t) => t.stop());
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video:
+              $("cameraDevice").value &&
+              $("cameraDevice").value !== "カメラ未選択"
+                ? { deviceId: { exact: $("cameraDevice").value } }
+                : true,
+          });
+          $("camera").srcObject = stream;
+          $("camera").hidden = false;
+          $("cameraHint").hidden = true;
+          const devices = (
+            await navigator.mediaDevices.enumerateDevices()
+          ).filter((d) => d.kind === "videoinput");
+          $("cameraDevice").replaceChildren(
+            ...devices.map((d) => new Option(d.label || "カメラ", d.deviceId)),
+          );
+          $("cameraDevice").value = stream
+            .getVideoTracks()[0]
+            .getSettings().deviceId;
+          state(
+            "ready",
+            "準備できました。カメラの機種と映る範囲を確認してください。",
+          );
+        } catch {
+          stream = null;
+          $("camera").hidden = true;
+          $("cameraHint").hidden = false;
+          state(
+            "idle",
+            "カメラを開けません。ブラウザとmacOSのカメラ許可を確認してください。",
+          );
+        }
+      }
+      $("prepare").onclick = prepare;
+      $("cameraDevice").onchange = prepare;
+      $("off").onclick = () => {
+        stream?.getTracks().forEach((t) => t.stop());
+        stream = null;
+        $("camera").srcObject = null;
+        $("camera").hidden = true;
+        $("cameraHint").hidden = false;
+        state("idle", "カメラを停止しました。");
+      };
+      async function uploadVideo(blob, source = "camera") {
+        if (blob.size > 64 * 1024 * 1024)
+          throw Error("動画は64 MiB以下にしてください");
+        const response = await api("/api/captures", {
+          method: "POST",
+          headers: { "Content-Type": blob.type, "X-Capture-Source": source },
+          body: blob,
+        });
+        const saved = await response.json();
+        await refresh();
+        return saved;
+      }
+      $("record").onclick = async () => {
+        const duration = Number($("duration").value);
+        if (!stream || phase !== "ready") return;
+        if (!Number.isFinite(duration) || duration < 5 || duration > 60) {
+          $("status").textContent = "撮影時間は5〜60秒です。";
+          return;
+        }
+        cancelCountdown = false;
+        state("countdown", "5秒後に撮影します。");
+        for (let n = 5; n > 0; n--) {
+          $("countdown").textContent = n;
+          await sleep(1000);
+          if (cancelCountdown) {
+            $("countdown").textContent = "";
+            state("ready", "撮影開始を取り消しました。");
+            return;
+          }
+        }
+        $("countdown").textContent = "";
+        try {
+          recorder = new MediaRecorder(stream);
+          const chunks = [];
+          let recordingFailed = false;
+          let started = performance.now();
+          recorder.ondataavailable = (e) => {
+            if (e.data.size) chunks.push(e.data);
+          };
+          const timer = setInterval(() => {
+            $("status").textContent =
+              `撮影中 ${Math.floor((performance.now() - started) / 1000)} / ${duration}秒`;
+          }, 300);
+          const timeout = setTimeout(() => {
+            if (recorder.state === "recording") recorder.stop();
+          }, duration * 1000);
+          recorder.onerror = () => {
+            recordingFailed = true;
+            clearInterval(timer);
+            clearTimeout(timeout);
+            state(
+              "ready",
+              "録画エラーが発生しました。保存状態を一覧で確認してください。",
+            );
+          };
+          recorder.onstop = async () => {
+            clearInterval(timer);
+            clearTimeout(timeout);
+            state("saving", "このMacへ保存しています…");
+            const recorded = new Blob(chunks, { type: recorder.mimeType });
+            try {
+              if (recordingFailed) throw Error("録画が中断されました");
+              await uploadVideo(recorded);
+              state(
+                "ready",
+                "保存しました。3D復元は未実行です。もう一度撮影できます。",
+              );
+            } catch (e) {
+              if (recorded.size) {
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(recorded);
+                link.download = recorded.type.includes("mp4")
+                  ? "body-scan.mp4"
+                  : "body-scan.webm";
+                link.textContent =
+                  "未保存の録画をダウンロード（画面を閉じる前に保存してください）";
+                link.style.display = "block";
+                $("unsaved").append(link);
+              }
+              state("ready", e.message);
+            }
+          };
+          recorder.start(1000);
+          state("recording", "撮影中…");
+        } catch {
+          state("ready", "このブラウザでは録画を開始できませんでした。");
+        }
+      };
+      $("stop").onclick = () => {
+        if (phase === "countdown") cancelCountdown = true;
+        else if (recorder?.state === "recording") recorder.stop();
+      };
+      $("upload").onclick = () => $("videoFile").click();
+      $("videoFile").onchange = async () => {
+        const file = $("videoFile").files[0];
+        if (!file) return;
+        state("saving", "動画をこのMacへ保存しています…");
+        try {
+          await uploadVideo(file, "file");
+          state(
+            stream ? "ready" : "idle",
+            "保存しました。3D復元は未実行です。",
+          );
+        } catch (e) {
+          state(stream ? "ready" : "idle", e.message);
+        }
+        $("videoFile").value = "";
+      };
+      async function refresh() {
+        try {
+          const { sessions, sam_state } = await (
+            await api("/api/sessions")
+          ).json();
+          samConfigured = sam_state === "configured";
+          if (samConfigured)
+            $("modelNotice").textContent =
+              "SAM 3D BodyをこのMacで実行できます。撮影の「3Dに復元」で開始してください。各方向の形状推定を集約するPoCで、実測精度は未検証です。";
+          clearTimeout(pollTimer);
+          if (sessions.some((s) => s.reconstruction?.state === "running"))
+            pollTimer = setTimeout(refresh, 2500);
+          $("sessions").replaceChildren();
+          const oldA = $("before").value,
+            oldB = $("after").value;
+          for (const select of [$("before"), $("after")])
+            select.replaceChildren(new Option("3Dを選択", ""));
+          for (const s of sessions) {
+            const label = `${s.label} · ${new Date(s.created_at * 1000).toLocaleString()}`;
+            const row = document.createElement("div");
+            row.className = "session";
+            const button = document.createElement("button");
+            button.className = "session-view";
+            const info = document.createElement("span");
+            info.textContent = label;
+            const small = document.createElement("small");
+            const excluded = s.reconstruction?.excluded_frames;
+            small.textContent = s.has_mesh
+              ? `3Dあり${excluded ? ` · 除外${excluded}枚` : ""} · 計測精度未検証`
+              : s.reconstruction?.state === "running"
+                ? `処理中 ${stageName(s.reconstruction.stage)} ${s.reconstruction.completed ?? ""}/${s.reconstruction.total ?? ""}`
+                : s.reconstruction?.state === "failed"
+                  ? s.reconstruction.error
+                  : "録画のみ · SAM復元未実行";
+            info.append(small);
+            button.append(info);
+            if (s.source_kind === "synthetic") {
+              const tag = document.createElement("span");
+              tag.className = "synthetic";
+              tag.textContent = "合成";
+              button.append(tag);
+            }
+            button.onclick = async () => {
+              const selection = ++playbackSelection;
+              if (s.has_mesh) await viewSingle(s.id);
+              if (selection !== playbackSelection) return;
+              if (s.has_video) {
+                try {
+                  const blob = await (await api(`/api/video/${s.id}`)).blob();
+                  if (selection !== playbackSelection) return;
+                  if (playbackURL) URL.revokeObjectURL(playbackURL);
+                  playbackURL = URL.createObjectURL(blob);
+                  $("playback").src = playbackURL;
+                  $("playback").hidden = false;
+                } catch (e) {
+                  $("status").textContent = e.message;
+                }
+              } else {
+                $("status").textContent =
+                  s.source_kind === "synthetic"
+                    ? "合成3Dを表示しています。"
+                    : "3Dを表示しています。";
+              }
+            };
+            row.append(button);
+            if (s.has_video && !s.has_mesh && samConfigured) {
+              const process = document.createElement("button");
+              process.textContent =
+                s.reconstruction?.state === "failed" ? "再試行" : "3Dに復元";
+              process.disabled = sessions.some(
+                (x) => x.reconstruction?.state === "running",
+              );
+              process.onclick = async () => {
+                process.disabled = true;
+                try {
+                  await api("/api/reconstruct", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: s.id }),
+                  });
+                  $("status").textContent =
+                    "SAMの3D復元を開始しました。撮影一覧に進捗を表示します。";
+                  await refresh();
+                } catch (e) {
+                  $("status").textContent = e.message;
+                  process.disabled = false;
+                }
+              };
+              row.append(process);
+            }
+            $("sessions").append(row);
+            if (s.has_mesh) {
+              $("before").append(new Option(label, s.id));
+              $("after").append(new Option(label, s.id));
+            }
+          }
+          if (!sessions.length)
+            $("sessions").textContent = "まだ撮影がありません。";
+          $("before").value = oldA;
+          $("after").value = oldB;
+          enableCompare();
+        } catch (e) {
+          $("status").textContent = e.message;
+        }
+      }
+      function invalidateComparison() {
+        comparisonVersion++;
+        comparison = null;
+        meshes = null;
+        $("metrics").hidden = true;
+        $("sections").hidden = true;
+        renderers?.forEach((r) => r.clear());
+        $("comparisonNote").textContent =
+          "選択した2回分の3Dで差分を再計算してください。";
+      }
+      function enableCompare() {
+        $("compare").disabled =
+          !$("before").value ||
+          !$("after").value ||
+          $("before").value === $("after").value;
+      }
+      $("before").onchange = () => {
+        invalidateComparison();
+        enableCompare();
+      };
+      $("after").onchange = () => {
+        invalidateComparison();
+        enableCompare();
+      };
+      $("refresh").onclick = refresh;
+      $("demo").onclick = async () => {
+        $("demo").disabled = true;
+        try {
+          const { ids } = await (
+            await api("/api/demo", { method: "POST", body: "" })
+          ).json();
+          await refresh();
+          $("before").value = ids[0];
+          $("after").value = ids[1];
+          invalidateComparison();
+          enableCompare();
+          $("status").textContent =
+            "合成3Dを追加しました。実際の身体を復元したものではありません。";
+        } catch (e) {
+          $("status").textContent = e.message;
+        } finally {
+          $("demo").disabled = false;
+        }
+      };
+      $("playback").onerror = () => {
+        $("status").textContent =
+          "この動画をブラウザで再生できません。保存ファイルは残っています。";
+      };
+      const stageName = (s) =>
+        ({
+          runtime_start: "実行準備",
+          reading_video: "動画を読み込み",
+          verifying_models: "モデル確認",
+          loading_sam: "SAM読み込み",
+          estimating_frames: "3D推定",
+          canonicalizing: "姿勢を統一",
+          fitting_contours: "輪郭を準備",
+          fitting_shared_shape: "輪郭にフィット",
+          starting: "開始待ち",
+        })[s] || s;
+      function renderer(canvas) {
+        const gl = canvas.getContext("webgl", { antialias: true });
+        if (!gl)
+          throw Error("WebGLが使えません。対応ブラウザで開いてください。");
+        function shader(type, code) {
+          const s = gl.createShader(type);
+          gl.shaderSource(s, code);
+          gl.compileShader(s);
+          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+            throw Error("3D表示の初期化に失敗しました");
+          return s;
+        }
+        const vertex = `attribute vec3 p,n,c;uniform vec3 center;uniform float scale,aspect,yaw,pitch;varying vec3 color;vec3 rotate(vec3 q){q=vec3(cos(yaw)*q.x+sin(yaw)*q.z,q.y,-sin(yaw)*q.x+cos(yaw)*q.z);return vec3(q.x,cos(pitch)*q.y-sin(pitch)*q.z,sin(pitch)*q.y+cos(pitch)*q.z);}void main(){vec3 q=rotate((p-center)*scale);gl_Position=vec4(q.x/aspect,q.y,-q.z*.25,1.);float light=.5+.5*abs(dot(normalize(rotate(n)),normalize(vec3(.3,.5,1.))));color=c*light;}`;
+        const program = gl.createProgram();
+        gl.attachShader(program, shader(gl.VERTEX_SHADER, vertex));
+        gl.attachShader(
+          program,
+          shader(
+            gl.FRAGMENT_SHADER,
+            "precision mediump float;varying vec3 color;void main(){gl_FragColor=vec4(color,1.);}",
+          ),
+        );
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+          throw Error("3D表示のリンクに失敗しました");
+        const buffers = {
+          p: gl.createBuffer(),
+          n: gl.createBuffer(),
+          c: gl.createBuffer(),
+        };
+        let count = 0;
+        return {
+          clear() {
+            count = 0;
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          },
+          load(mesh, distances, limit) {
+            const positions = [],
+              normals = [],
+              colors = [],
+              region = mesh.comparison_vertex_indices
+                ? new Set(mesh.comparison_vertex_indices)
+                : null;
+            for (const f of mesh.faces) {
+              const a = mesh.vertices[f[0]],
+                b = mesh.vertices[f[1]],
+                c = mesh.vertices[f[2]],
+                u = b.map((v, i) => v - a[i]),
+                v = c.map((w, i) => w - a[i]);
+              const normal = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+              ];
+              for (const index of f) {
+                positions.push(...mesh.vertices[index]);
+                normals.push(...normal);
+                const t = distances ? Math.min(1, distances[index] / limit) : 0;
+                if (distances && region && !region.has(index)) {
+                  colors.push(0.42, 0.5, 0.46);
+                  continue;
+                }
+                colors.push(
+                  distances ? 0.6 + 0.25 * t : 0.28,
+                  distances ? 0.77 - 0.5 * t : 0.61,
+                  distances ? 0.68 - 0.45 * t : 0.55,
+                );
+              }
+            }
+            count = positions.length / 3;
+            gl.useProgram(program);
+            for (const [key, data] of Object.entries({
+              p: positions,
+              n: normals,
+              c: colors,
+            })) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, buffers[key]);
+              gl.bufferData(
+                gl.ARRAY_BUFFER,
+                new Float32Array(data),
+                gl.STATIC_DRAW,
+              );
+              const loc = gl.getAttribLocation(program, key);
+              gl.enableVertexAttribArray(loc);
+              gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+            }
+          },
+          draw(center, scale) {
+            const ratio = Math.min(devicePixelRatio || 1, 2);
+            canvas.width = Math.round(canvas.clientWidth * ratio);
+            canvas.height = Math.round(canvas.clientHeight * ratio);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clearColor(0.075, 0.13, 0.11, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+            gl.useProgram(program);
+            gl.uniform3fv(gl.getUniformLocation(program, "center"), center);
+            for (const [key, value] of Object.entries({
+              scale,
+              aspect: canvas.width / canvas.height,
+              yaw,
+              pitch,
+            }))
+              gl.uniform1f(gl.getUniformLocation(program, key), value);
+            gl.drawArrays(gl.TRIANGLES, 0, count);
+          },
+        };
+      }
+      let renderers = null,
+        comparisonVersion = 0;
+      async function viewSingle(id) {
+        const version = ++comparisonVersion;
+        try {
+          const mesh = await (await api(`/api/mesh/${id}`)).json();
+          if (version !== comparisonVersion) return;
+          if (!renderers)
+            renderers = [
+              renderer($("beforeCanvas")),
+              renderer($("afterCanvas")),
+            ];
+          meshes = [mesh];
+          comparison = null;
+          renderers[0].load(mesh, null, 5);
+          renderers[1].clear();
+          draw();
+          $("before").value = id;
+          $("after").value = "";
+          enableCompare();
+          $("metrics").hidden = true;
+          $("sections").hidden = true;
+          $("comparisonNote").textContent =
+            (mesh.source_kind === "synthetic"
+              ? "合成3Dです。"
+              : "SAMから作成した1回分のモデル形状です。画面外の部位は補完されています。") +
+            " 比較するには2回目の3Dを選択してください。実測精度は未検証です。";
+        } catch (e) {
+          $("comparisonNote").textContent = e.message;
+        }
+      }
+      function draw() {
+        if (!meshes || !renderers) return;
+        const low = [Infinity, Infinity, Infinity],
+          high = [-Infinity, -Infinity, -Infinity];
+        for (const m of meshes)
+          for (const p of m.vertices)
+            for (let i = 0; i < 3; i++) {
+              low[i] = Math.min(low[i], p[i]);
+              high[i] = Math.max(high[i], p[i]);
+            }
+        const center = low.map((v, i) => (v + high[i]) / 2),
+          scale = 1.65 / Math.max(...high.map((v, i) => v - low[i]));
+        renderers.forEach((r) => r.draw(center, scale));
+      }
+      $("compare").onclick = async () => {
+        $("compare").disabled = true;
+        $("tolerance").disabled = true;
+        $("metrics").hidden = true;
+        $("sections").hidden = true;
+        $("comparisonNote").textContent = "差分を計算しています…";
+        try {
+          const before = $("before").value,
+            after = $("after").value,
+            t = $("tolerance").value,
+            version = ++comparisonVersion;
+          const nextComparison = await (
+            await api("/api/compare", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                before,
+                after,
+                tolerance_mm: t === "" ? null : Number(t),
+              }),
+            })
+          ).json();
+          const nextMeshes = await Promise.all(
+            [before, after].map(async (id) =>
+              (await api(`/api/mesh/${id}`)).json(),
+            ),
+          );
+          if (
+            version !== comparisonVersion ||
+            before !== $("before").value ||
+            after !== $("after").value
+          )
+            return;
+          comparison = nextComparison;
+          meshes = nextMeshes;
+          if (!renderers)
+            renderers = [
+              renderer($("beforeCanvas")),
+              renderer($("afterCanvas")),
+            ];
+          renderers[0].load(meshes[0], null, 5);
+          renderers[1].load(
+            meshes[1],
+            comparison.vertex_distances_mm,
+            Number($("colorLimit").value) || 5,
+          );
+          draw();
+          $("metrics").hidden = false;
+          const unit = comparison.units === "model_mm" ? " モデルmm" : " mm";
+          $("rms").textContent = comparison.rms_mm.toFixed(3) + unit;
+          $("p95").textContent = comparison.p95_mm.toFixed(3) + unit;
+          $("maximum").textContent = comparison.max_mm.toFixed(3) + unit;
+          $("comparisonNote").textContent =
+            (comparison.source_kind === "synthetic"
+              ? "合成デモの比較です。 "
+              : "") +
+            (comparison.identical_geometry ? "入力3Dは同じ形状です。 " : "") +
+            (comparison.tolerance_result === "not_set"
+              ? "許容幅は未設定です。"
+              : comparison.tolerance_result === "within_user_tolerance"
+                ? "RMS差は指定した許容幅以内です。"
+                : "RMS差は指定した許容幅を超えています。") +
+            " 体型変化の有無は未判定です。" +
+            (comparison.metric_region === "torso"
+              ? " 指標は胴体の対応点のみです。"
+              : "") +
+            (comparison.duplicate_capture_input
+              ? " 同じ原動画なので独立した再撮影ではありません。"
+              : "") +
+            (comparison.source_quality?.some(
+              (q) => q && q.rotation_confirmed === false,
+            )
+              ? " 一周分の向きを確認できていない撮影があります。"
+              : "") +
+            (comparison.source_quality?.some((q) => q && q.excluded_frames)
+              ? " 撮影条件を満たさないフレームを除外した撮影があります。"
+              : "");
+          const tbody = $("sections").querySelector("tbody");
+          tbody.replaceChildren();
+          for (const row of comparison.sections) {
+            const tr = document.createElement("tr");
+            for (const value of [
+              row.id,
+              row.before_mm,
+              row.after_mm,
+              row.delta_mm,
+            ]) {
+              const td = document.createElement("td");
+              td.textContent =
+                typeof value === "number"
+                  ? value.toFixed(3)
+                  : (value ?? "測定不可");
+              tr.append(td);
+            }
+            tbody.append(tr);
+          }
+          $("sections").hidden = !comparison.sections.length;
+        } catch (e) {
+          invalidateComparison();
+          $("comparisonNote").textContent = e.message;
+        } finally {
+          $("tolerance").disabled = false;
+          enableCompare();
+        }
+      };
+      $("colorLimit").onchange = () => {
+        const n = Number($("colorLimit").value);
+        if (n > 0 && comparison && renderers) {
+          renderers[1].load(meshes[1], comparison.vertex_distances_mm, n);
+          draw();
+        }
+      };
+      for (const canvas of [$("beforeCanvas"), $("afterCanvas")]) {
+        let previous = null;
+        canvas.onpointerdown = (e) => {
+          previous = [e.clientX, e.clientY];
+          canvas.setPointerCapture(e.pointerId);
+        };
+        canvas.onpointermove = (e) => {
+          if (!previous) return;
+          yaw += (e.clientX - previous[0]) * 0.01;
+          pitch = Math.max(
+            -1,
+            Math.min(1, pitch + (e.clientY - previous[1]) * 0.01),
+          );
+          previous = [e.clientX, e.clientY];
+          draw();
+        };
+        canvas.onpointerup = canvas.onpointercancel = () => (previous = null);
+        canvas.onkeydown = (e) => {
+          if (
+            !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)
+          )
+            return;
+          e.preventDefault();
+          yaw +=
+            e.key === "ArrowRight" ? 0.1 : e.key === "ArrowLeft" ? -0.1 : 0;
+          pitch = Math.max(
+            -1,
+            Math.min(
+              1,
+              pitch +
+                (e.key === "ArrowDown" ? 0.1 : e.key === "ArrowUp" ? -0.1 : 0),
+            ),
+          );
+          draw();
+        };
+      }
+      window.addEventListener("resize", draw);
+      refresh();
+    </script>
+  </body>
+</html>
