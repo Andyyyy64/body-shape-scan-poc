@@ -1,4 +1,9 @@
-"""Offline refinement of a saved recording; writes a new UI-readable session."""
+"""Offline contour refinement of a legacy ``sam_parameter_ensemble`` recording.
+
+Writes a new UI-readable session using the same shared-shape silhouette fit
+that the default pipeline now applies. Kept for re-processing recordings made
+before the fit became the default; it does not modify the source session.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
+from .contours import contour_observation
 from .io import (
     InputError,
     new_run,
@@ -21,7 +27,17 @@ from .io import (
     write_json,
 )
 from .mesh import validate_mesh
+from .quality import (
+    CAPTURE_PROTOCOL_ID,
+    FrameRejected,
+    frame_protocol_violations,
+    minimum_usable_frames,
+    select_primary_person,
+    summarize_outcomes,
+)
 from .shared_shape import fit_observations
+
+METHOD = "fixed_pose_silhouette_fit.v1"
 
 
 def run(config_path, store, source_id):
@@ -77,7 +93,6 @@ def run(config_path, store, source_id):
         import numpy as np
         import psutil
         import torch
-        from scipy.spatial import cKDTree
 
         os.environ["YOLO_CONFIG_DIR"] = str(destination / "detector_settings")
         from ultralytics import YOLO
@@ -104,7 +119,7 @@ def run(config_path, store, source_id):
             destination / "session.json",
             {
                 **meta,
-                "label": "輪郭フィット（試験）",
+                "label": "輪郭フィット（再処理）",
                 "derived_from": source_id,
                 "state": "refining",
             },
@@ -116,19 +131,10 @@ def run(config_path, store, source_id):
         cv2.setNumThreads(1)
         model = torch.jit.load(config["mhr_model"], map_location="cpu").eval()
         detector = YOLO(config["segmentation_model"])
-        rows = [
-            r for r in read_json(manifests[0])["frames"] if r["state"] == "estimated"
-        ]
+        manifest = read_json(manifests[0])["frames"]
+        rows = [r for r in manifest if r["state"] == "estimated"]
         if not 3 <= len(rows) <= 32:
             raise InputError("Refinement needs 3–32 saved frame estimates")
-        values = []
-        for row in rows:
-            with np.load(
-                relative_asset(manifests[0].parent, row["output"]), allow_pickle=False
-            ) as value:
-                values.append({key: value[key] for key in value.files})
-        shapes = np.stack([v["shape_params"] for v in values])
-        initial = np.median(shapes, axis=0).astype("float32")
         faces = np.asarray(original["faces"])
         profile = read_json(root / "profile.json")
         if original["scale_reference_id"] != "model_skeleton_" + profile["id"]:
@@ -159,10 +165,15 @@ def run(config_path, store, source_id):
             capture.release()
         if set(frames) != set(selected):
             raise InputError("Saved frame indices could not be decoded")
-        bases, bases_delta, targets, cameras, focals, centers = [], [], [], [], [], []
-        for j, (row, value) in enumerate(zip(rows, values)):
+        outcomes = [dict(r) for r in manifest if r["state"] != "estimated"]
+        kept = []
+        for row in rows:
             image = frames.pop(row["frame"])
             height, width = image.shape[:2]
+            with np.load(
+                relative_asset(manifests[0].parent, row["output"]), allow_pickle=False
+            ) as value:
+                value = {key: value[key] for key in value.files}
             prediction = detector.predict(
                 image,
                 classes=[0],
@@ -171,79 +182,63 @@ def run(config_path, store, source_id):
                 verbose=False,
                 save=False,
             )[0]
-            if prediction.masks is None or len(prediction.masks.data) != 1:
-                raise InputError("Refinement needs one person per saved frame")
-            mask = prediction.masks.data[0].numpy().astype("uint8")
+            masks = [] if prediction.masks is None else list(prediction.masks.data)
+            try:
+                primary = select_primary_person([float(m.sum()) for m in masks])
+            except FrameRejected as rejected:
+                outcomes.append({**row, "state": "failed", "reason": rejected.reason})
+                continue
+            mask = masks[primary].numpy().astype("uint8")
             if mask.shape != (height, width):
                 raise InputError("Mask coordinates differ from the image")
-            posed = vertices(initial, value["mhr_model_params"])
-            camera = value["pred_cam_t"]
-            focal = float(value["focal_length"])
-            position = posed + camera
-            if (position[:, 2] <= 0.1).any():
-                raise InputError("Invalid initial camera geometry")
-            projected = position[:, :2] / position[:, 2:] * focal + [
-                width / 2,
-                height / 2,
-            ]
-            raster = np.zeros((height, width), np.uint8)
-            for face in faces:
-                cv2.fillConvexPoly(
-                    raster, np.clip(projected[face], -10000, 10000).astype("int32"), 1
+            violations = frame_protocol_violations(
+                value["pred_keypoints_2d"], width, height
+            )
+            if violations:
+                outcomes.append(
+                    {
+                        **row,
+                        "state": "excluded",
+                        "reason": violations[0],
+                        "reasons": violations,
+                    }
                 )
+                continue
+            kept.append((row, value, mask))
+            outcomes.append(row)
+        summary = summarize_outcomes(outcomes)
+        required = minimum_usable_frames(len(manifest))
+        if len(kept) < required:
+            raise InputError(
+                f"Only {len(kept)}/{len(manifest)} frames satisfy the capture protocol; {required} required"
+            )
+        shapes = np.stack([value["shape_params"] for _, value, _ in kept])
+        initial = np.median(shapes, axis=0).astype("float32")
+        observations = []
+        for j, (row, value, mask) in enumerate(kept):
 
-            def contour(binary):
-                contours, _ = cv2.findContours(
-                    binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
-                )
-                if not contours:
-                    raise InputError("No silhouette boundary")
-                points = max(contours, key=len)[:, 0, :]
-                points = points[
-                    (points[:, 0] > 2)
-                    & (points[:, 0] < width - 3)
-                    & (points[:, 1] > 2)
-                    & (points[:, 1] < height - 3)
-                ]
-                if len(points) < 30:
-                    raise InputError("Insufficient untruncated silhouette boundary")
-                return points
+            def posed(shape, params=value["mhr_model_params"]):
+                return vertices(shape, params)
 
-            predicted, observed = contour(raster), contour(mask)
-            ids = np.unique(cKDTree(projected).query(predicted)[1])
-            ids = ids[np.linspace(0, len(ids) - 1, 256).astype(int)]
-            observed = observed[np.linspace(0, len(observed) - 1, 256).astype(int)]
-            base = posed[ids]
-            basis = []
-            for dim in range(len(initial)):
-                changed = initial.copy()
-                changed[dim] += 1
-                basis.append(vertices(changed, value["mhr_model_params"])[ids] - base)
-            basis = np.stack(basis, axis=-1)
-            perturbation = np.linspace(-0.1, 0.1, len(initial)).astype("float32")
-            residual = np.max(
-                abs(
-                    vertices(initial + perturbation, value["mhr_model_params"])[ids]
-                    - (base + basis @ perturbation)
+            observations.append(
+                contour_observation(
+                    mask,
+                    faces,
+                    posed,
+                    initial,
+                    value["pred_cam_t"],
+                    float(value["focal_length"]),
                 )
             )
-            if residual > 1e-4:
-                raise InputError("MHR local shape basis failed the linearity check")
-            bases.append(base)
-            bases_delta.append(basis)
-            targets.append(observed)
-            cameras.append(camera)
-            focals.append(focal)
-            centers.append([width / 2, height / 2])
-            progress("preparing_contours", completed=j + 1, total=len(rows))
-        progress("fitting_shared_shape", completed=len(rows), total=len(rows))
+            progress("preparing_contours", completed=j + 1, total=len(kept))
+        progress("fitting_shared_shape", completed=len(kept), total=len(kept))
         fit = fit_observations(
-            np.array(bases),
-            np.array(bases_delta),
-            np.array(targets),
-            np.array(cameras),
-            np.array(focals),
-            np.array(centers),
+            np.array([o["base"] for o in observations]),
+            np.array([o["basis"] for o in observations]),
+            np.array([o["target"] for o in observations]),
+            np.array([o["camera"] for o in observations]),
+            np.array([o["focal"] for o in observations]),
+            np.array([o["center"] for o in observations]),
             np.maximum(np.std(shapes, axis=0), 0.1),
         )
         shape = initial + fit.pop("shape_delta")
@@ -252,28 +247,39 @@ def run(config_path, store, source_id):
         params[136:] = profile["skeleton_scales"]
         canonical = vertices(shape, params)
         canonical[:, [1, 2]] *= -1
-        method = "fixed_pose_silhouette_fit.v1"
         result = {
             **original,
             "vertices": canonical.tolist(),
-            "method": method,
+            "method": METHOD,
             "producer": "SAM/MHR initialization + shared-shape silhouette fit",
             "physical_accuracy_validated": False,
             "quality": {
                 **original["quality"],
-                "warning": "Experimental fixed-pose contour fit; accuracy unvalidated",
+                "usable_frames": len(kept),
+                **summary,
+                "warning": "Fixed per-frame poses; accuracy unvalidated",
             },
         }
         validate_mesh(result)
+        write_json(destination / "frames.json", {"frames": outcomes})
         write_json(
             destination / "fit.json",
             {
                 **fit,
-                "method": method,
+                "method": METHOD,
+                "capture_protocol_id": CAPTURE_PROTOCOL_ID,
                 "source_mesh_sha256": sha256(source / "mesh.json"),
-                "implementation_sha256": sha256(Path(__file__)),
-                "optimizer_sha256": sha256(Path(__file__).with_name("shared_shape.py")),
+                "implementation_sha256": {
+                    name: sha256(Path(__file__).with_name(name))
+                    for name in (
+                        "refine.py",
+                        "contours.py",
+                        "shared_shape.py",
+                        "quality.py",
+                    )
+                },
                 "engine_id": config["engine_id"],
+                "initial_shape_params": initial.tolist(),
                 "shape_params": shape.tolist(),
             },
         )
@@ -284,6 +290,11 @@ def run(config_path, store, source_id):
                 "state": "complete",
                 "stage": "complete",
                 "elapsed_s": round(time.monotonic() - started, 1),
+                "method": METHOD,
+                "usable_frames": len(kept),
+                "total_frames": len(manifest),
+                "excluded_frames": summary["excluded_frames"],
+                "exclusion_reasons": summary["exclusion_reasons"],
             },
         )
         return destination

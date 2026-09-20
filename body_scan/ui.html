@@ -706,8 +706,9 @@
             const info = document.createElement("span");
             info.textContent = label;
             const small = document.createElement("small");
+            const excluded = s.reconstruction?.excluded_frames;
             small.textContent = s.has_mesh
-              ? "3Dあり · 計測精度未検証"
+              ? `3Dあり${excluded ? ` · 除外${excluded}枚` : ""} · 計測精度未検証`
               : s.reconstruction?.state === "running"
                 ? `処理中 ${stageName(s.reconstruction.stage)} ${s.reconstruction.completed ?? ""}/${s.reconstruction.total ?? ""}`
                 : s.reconstruction?.state === "failed"
@@ -840,6 +841,8 @@
           loading_sam: "SAM読み込み",
           estimating_frames: "3D推定",
           canonicalizing: "姿勢を統一",
+          fitting_contours: "輪郭を準備",
+          fitting_shared_shape: "輪郭にフィット",
           starting: "開始待ち",
         })[s] || s;
       function renderer(canvas) {
@@ -1068,6 +1071,9 @@
               (q) => q && q.rotation_confirmed === false,
             )
               ? " 一周分の向きを確認できていない撮影があります。"
+              : "") +
+            (comparison.source_quality?.some((q) => q && q.excluded_frames)
+              ? " 撮影条件を満たさないフレームを除外した撮影があります。"
               : "");
           const tbody = $("sections").querySelector("tbody");
           tbody.replaceChildren();

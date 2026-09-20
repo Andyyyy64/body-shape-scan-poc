@@ -1,6 +1,12 @@
-"""Local rotation video -> SAM parameter ensemble -> canonical MHR mesh.
+"""Local rotation video -> per-frame SAM estimates -> shared-shape contour fit.
 
-This is the independent-image ensemble baseline, NOT multi-view silhouette fitting.
+Default reconstruction (``fixed_pose_silhouette_fit.v1``): sample frames,
+select the primary person, estimate pose/shape per frame with SAM 3D Body,
+exclude frames that violate the capture protocol, initialise one shared shape
+from the per-frame median, then refine it against every frame's observed
+silhouette with the per-frame poses held fixed. The canonical MHR mesh uses
+the store's first-scan skeleton scales. This is not multi-view pose fitting
+and carries no physical-unit calibration.
 """
 
 from __future__ import annotations
@@ -17,6 +23,25 @@ from pathlib import Path
 
 from .io import InputError, new_run, read_json, replace_json, sha256, write_json
 from .mesh import validate_mesh
+from .quality import (
+    CAPTURE_PROTOCOL_ID,
+    FrameRejected,
+    frame_protocol_violations,
+    minimum_usable_frames,
+    select_primary_person,
+    summarize_outcomes,
+)
+
+METHOD = "fixed_pose_silhouette_fit.v1"
+PRODUCER = (
+    "SAM 3D Body + MHR; per-frame median initialisation + shared-shape silhouette fit"
+)
+REASON_TEXT = {
+    "no_person": "人物未検出",
+    "multiple_people": "複数の人物",
+    "core_out_of_frame": "頭〜腰が画面外",
+    "arm_not_lowered": "腕が下がっていない",
+}
 
 
 def run(config_path: str, store: str, identifier: str):
@@ -98,6 +123,9 @@ def run(config_path: str, store: str, identifier: str):
         import torch
         from ultralytics import YOLO, settings
 
+        from .contours import contour_observation
+        from .shared_shape import fit_observations
+
         settings.update({"sync": False})
 
         torch.set_num_threads(config["cpu_threads"])
@@ -146,6 +174,7 @@ def run(config_path: str, store: str, identifier: str):
         try:
             for i, (frame_index, bgr) in enumerate(frames):
                 progress("estimating_frames", completed=i, total=len(indices))
+                height, width = bgr.shape[:2]
                 prediction = detector.predict(
                     bgr,
                     classes=[0],
@@ -155,17 +184,20 @@ def run(config_path: str, store: str, identifier: str):
                     save=False,
                     project=str(attempt / "segmentation"),
                 )[0]
-                if prediction.masks is None or len(prediction.masks.data) != 1:
+                masks = [] if prediction.masks is None else list(prediction.masks.data)
+                try:
+                    primary = select_primary_person([float(m.sum()) for m in masks])
+                except FrameRejected as rejected:
                     outcomes.append(
                         {
                             "frame": int(frame_index),
                             "state": "failed",
-                            "reason": "expected_one_person",
+                            "reason": rejected.reason,
                         }
                     )
                     continue
-                mask = prediction.masks.data[0].cpu().numpy() > 0.5
-                if mask.shape != bgr.shape[:2]:
+                mask = masks[primary].cpu().numpy() > 0.5
+                if mask.shape != (height, width):
                     raise InputError("Segmentation and RGB coordinates differ")
                 yy, xx = np.where(mask)
                 bbox = np.array(
@@ -205,7 +237,22 @@ def run(config_path: str, store: str, identifier: str):
                 yaw = math.atan2(float(rotation[0, 2]), float(rotation[2, 2])) % (
                     2 * math.pi
                 )
-                estimates.append((yaw, value))
+                violations = frame_protocol_violations(
+                    value["pred_keypoints_2d"], width, height
+                )
+                if violations:
+                    outcomes.append(
+                        {
+                            "frame": int(frame_index),
+                            "state": "excluded",
+                            "reason": violations[0],
+                            "reasons": violations,
+                            "yaw_rad": yaw,
+                            "output": name,
+                        }
+                    )
+                    continue
+                estimates.append((yaw, value, mask))
                 outcomes.append(
                     {
                         "frame": int(frame_index),
@@ -216,37 +263,25 @@ def run(config_path: str, store: str, identifier: str):
                 )
         finally:
             frames.clear()
-        if len(estimates) < 3:
-            write_json(attempt / "frames.json", {"frames": outcomes})
-            raise InputError(
-                "Fewer than three usable body estimates; retake with one visible person"
+        write_json(attempt / "frames.json", {"frames": outcomes})
+        summary = summarize_outcomes(outcomes)
+        required = minimum_usable_frames(len(indices))
+        if len(estimates) < required:
+            detail = "、".join(
+                f"{REASON_TEXT.get(reason, reason)} {count}枚"
+                for reason, count in summary["exclusion_reasons"].items()
             )
-        progress("canonicalizing", completed=len(estimates), total=len(indices))
-        # Equalize coarse angular coverage before aggregating independent SAM shape estimates.
-        bins = {}
-        for yaw, value in estimates:
-            bins.setdefault(int(yaw / (2 * math.pi) * 8) % 8, []).append(value)
-        shape = np.median(
-            np.stack(
-                [
-                    np.median(np.stack([r["shape_params"] for r in group]), axis=0)
-                    for group in bins.values()
-                ]
-            ),
-            axis=0,
+            raise InputError(
+                f"使用できるフレームが{len(estimates)}/{len(indices)}枚で、必要な{required}枚に届きません"
+                f"（{detail}）。脱力して腕を下げ、約2mで頭から腰まで画面に入れて撮り直してください。"
+            )
+        progress("fitting_contours", completed=0, total=len(estimates))
+        shapes = np.stack([value["shape_params"] for _, value, _ in estimates])
+        initial = np.median(shapes, axis=0).astype("float32")
+        frame_scales = np.stack(
+            [value["mhr_model_params"][136:] for _, value, _ in estimates]
         )
-        scales = np.median(
-            np.stack(
-                [
-                    np.median(
-                        np.stack([r["mhr_model_params"][136:] for r in group]), axis=0
-                    )
-                    for group in bins.values()
-                ]
-            ),
-            axis=0,
-        )
-        if shape.shape != (45,) or scales.shape != (68,):
+        if initial.shape != (45,) or frame_scales.shape[1:] != (68,):
             raise InputError("Unexpected SAM/MHR parameter dimensions")
         profile_path = root / "profile.json"
         if profile_path.exists():
@@ -256,16 +291,52 @@ def run(config_path: str, store: str, identifier: str):
                     "The model/backend changed; use a separate store or explicitly bridge versions"
                 )
             scales = np.asarray(profile["skeleton_scales"], np.float32)
-        params = torch.zeros(1, 204)
-        params[:, 136:] = torch.from_numpy(scales.astype("float32"))
-        with torch.no_grad():
-            verts, skel = model.head_pose.mhr(
-                torch.from_numpy(shape.astype("float32"))[None],
-                params,
-                torch.zeros(1, 72),
+        else:
+            scales = np.median(frame_scales, axis=0).astype("float32")
+
+        def mhr_vertices(shape, params):
+            with torch.no_grad():
+                verts, skel = model.head_pose.mhr(
+                    torch.as_tensor(shape, dtype=torch.float32)[None],
+                    torch.as_tensor(params, dtype=torch.float32)[None],
+                    torch.zeros(1, 72),
+                )
+            return verts[0].numpy() / 100.0, skel[0, :, :3].numpy() / 100.0
+
+        faces = estimator.faces.astype(int)
+        observations = []
+        for j, (_, value, mask) in enumerate(estimates):
+
+            def posed(shape, params=value["mhr_model_params"]):
+                vertices = mhr_vertices(shape, params)[0]
+                vertices[:, [1, 2]] *= -1  # MHR y-up/z-back -> camera y-down/z-forward
+                return vertices
+
+            observations.append(
+                contour_observation(
+                    mask,
+                    faces,
+                    posed,
+                    initial,
+                    value["pred_cam_t"],
+                    float(value["focal_length"]),
+                )
             )
-        vertices = verts[0].numpy() / 100.0
-        skeleton = skel[0, :, :3].numpy() / 100.0
+            progress("fitting_contours", completed=j + 1, total=len(estimates))
+        progress("fitting_shared_shape", completed=len(estimates), total=len(estimates))
+        fit = fit_observations(
+            np.array([o["base"] for o in observations]),
+            np.array([o["basis"] for o in observations]),
+            np.array([o["target"] for o in observations]),
+            np.array([o["camera"] for o in observations]),
+            np.array([o["focal"] for o in observations]),
+            np.array([o["center"] for o in observations]),
+            np.maximum(np.std(shapes, axis=0), 0.1),
+        )
+        shape = (initial + fit.pop("shape_delta")).astype("float32")
+        params = np.zeros(204, np.float32)
+        params[136:] = scales
+        vertices, skeleton = mhr_vertices(shape, params)
         mapping = model.head_pose.keypoint_mapping.detach().cpu().numpy()
         joints = mapping @ np.concatenate([vertices, skeleton])
         if not profile_path.exists():
@@ -298,9 +369,13 @@ def run(config_path: str, store: str, identifier: str):
                 "source_capture_sha256": meta["video_sha256"],
             }
 
-        angles = sorted(y for y, _ in estimates)
+        angles = sorted(y for y, _, _ in estimates)
         gap = max(b - a for a, b in zip(angles, angles[1:] + [angles[0] + 2 * math.pi]))
+        bins = {int(y / (2 * math.pi) * 8) % 8 for y in angles}
         complete = len(bins) >= 6 and gap <= math.pi / 2
+        depth = float(
+            np.median([float(value["pred_cam_t"][2]) for _, value, _ in estimates])
+        )
         mesh = {
             "schema_version": "canonical_mesh.v1",
             "source_kind": "real",
@@ -308,27 +383,51 @@ def run(config_path: str, store: str, identifier: str):
             "reference_frame_id": "mhr_rest_" + profile["id"],
             "canonical_pose_id": "mhr_zero_pose_136.v1",
             "scale_reference_id": "model_skeleton_" + profile["id"],
-            "producer": "SAM 3D Body + MHR; angle-binned parameter ensemble",
-            "method": "sam_parameter_ensemble",
+            "producer": PRODUCER,
+            "method": METHOD,
             "capture_sha256": meta["video_sha256"],
             "sections": profile["sections"],
             "comparison_vertex_indices": profile["comparison_vertex_indices"],
             "vertices": vertices.tolist(),
-            "faces": estimator.faces.astype(int).tolist(),
+            "faces": faces.tolist(),
             "quality": {
                 "rotation_confirmed": complete,
                 "orientation_bins": len(bins),
                 "max_yaw_gap_deg": math.degrees(gap),
                 "usable_frames": len(estimates),
                 "attempted_frames": len(indices),
-                "warning": "Model-estimated dimensions; unobserved body parts may be imputed. Not multi-view silhouette fitting.",
+                "camera_depth_median_model_m": depth,
+                **summary,
+                "warning": "Model-estimated dimensions; unobserved body parts may be imputed. Fixed per-frame poses; accuracy unvalidated.",
             },
             "physical_accuracy_validated": False,
         }
         validate_mesh(mesh)
         if not profile_path.exists():
             write_json(profile_path, profile)
-        write_json(attempt / "frames.json", {"frames": outcomes})
+        write_json(
+            attempt / "fit.json",
+            {
+                **{
+                    k: (v.tolist() if hasattr(v, "tolist") else v)
+                    for k, v in fit.items()
+                },
+                "method": METHOD,
+                "capture_protocol_id": CAPTURE_PROTOCOL_ID,
+                "initial_shape_params": initial.tolist(),
+                "shape_params": shape.tolist(),
+                "implementation_sha256": {
+                    name: sha256(Path(__file__).with_name(name))
+                    for name in (
+                        "pipeline.py",
+                        "contours.py",
+                        "shared_shape.py",
+                        "quality.py",
+                    )
+                },
+                "engine_id": config["engine_id"],
+            },
+        )
         write_json(session / "mesh.json", mesh)
         replace_json(
             status_file,
@@ -336,8 +435,11 @@ def run(config_path: str, store: str, identifier: str):
                 "state": "complete",
                 "stage": "complete",
                 "elapsed_s": round(time.monotonic() - started, 1),
+                "method": METHOD,
                 "usable_frames": len(estimates),
                 "total_frames": len(indices),
+                "excluded_frames": summary["excluded_frames"],
+                "exclusion_reasons": summary["exclusion_reasons"],
                 "rotation_confirmed": complete,
                 "peak_rss_mb": round(peak["rss_bytes"] / 1024**2),
                 "engine_id": config["engine_id"],

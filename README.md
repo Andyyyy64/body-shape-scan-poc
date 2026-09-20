@@ -21,7 +21,7 @@ uv run body-scan serve --data-root "$HOME/body-scan-private/scans" \
 
 Open the loopback URL printed by `serve`. All videos, meshes, profiles, comparisons, weights and runtime logs stay outside Git. The inference subprocess runs with macOS network access denied. There is no cloud inference or automatic device fallback.
 
-Reconstruction is the **independent-image SAM parameter-ensemble baseline**: sample frames, segment one person, estimate shape per frame, balance coarse orientation bins, aggregate shape, and generate a canonical MHR mesh. The first scan establishes shared skeleton scales and fixed torso measurement locations; later scans estimate their own shape. Multi-view silhouette optimization remains a separate research gate.
+Reconstruction is the **shared-shape silhouette fit** (`fixed_pose_silhouette_fit.v1`): sample frames, select the primary person (small secondary detections are ignored, comparable ones reject the frame), estimate pose and shape per frame with SAM 3D Body, exclude frames that violate the capture protocol (head-to-pelvis inside the image, arms hanging below the elbows), initialise one shape from the per-frame median, then optimise that shared shape and per-frame camera translation against every frame's observed silhouette with the per-frame poses fixed. A capture with fewer than 75% usable frames is refused with the reasons. The first scan establishes shared skeleton scales and fixed torso measurement locations; later scans estimate their own shape. Turning speed and path are free; abdominal tension, arm position and framing are the protocol. Full joint pose/camera fitting remains a separate research gate.
 
 The screen reports **model-space** geometry differences, not proven biological changes. Dates never force differences to zero. Reusing the same video is flagged as a duplicate input, not counted as independent repeatability evidence. [Detailed usage and limitations](docs/runbook.ja.md).
 
@@ -83,7 +83,7 @@ Dependencies' code, model weights, and datasets have separate terms. This reposi
 
 The numerical, privacy, local API and synthetic-image tests are executable. On the development Mac, official SAM inference and the MHR full-parameter round trip were executed. The browser-to-video-to-SAM-to-canonical-mesh-to-comparison path was exercised with a public-reference-image test video. Repeated processing of that identical video produced identical geometry and was explicitly flagged as duplicate input.
 
-This is **not** evidence from an independent human rotation capture or a longitudinal body-change trial. Real camera operation, rotation quality and repeatability still require participant testing. Full multi-view silhouette fitting and confirmatory human validation remain open. GitHub Issues track progress and blockers.
+A private single-participant short-interval repeatability evaluation was run on the development Mac with held-out captures; its results stay outside this repository pending disclosure review. This is **not** evidence of physical accuracy or of a longitudinal body-change trial, and sensitivity to a known real change is untested. Full multi-view silhouette fitting and confirmatory human validation remain open. GitHub Issues track progress and blockers.
 
 ## Primary sources
 

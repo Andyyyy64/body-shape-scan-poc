@@ -175,7 +175,7 @@ def setup(output: str, frames: int = 16) -> dict:
         "min_available_mb": 1200,
         "mps_memory_fraction": 0.5,
         "network_sandbox": "macos",
-        "pipeline_version": "sam_parameter_ensemble.v1",
+        "pipeline_version": "fixed_pose_silhouette_fit.v1",
         "sam_commit": SAM_COMMIT,
         "dino_commit": DINO_COMMIT,
         "source_patch_sha256": patched_hash,
