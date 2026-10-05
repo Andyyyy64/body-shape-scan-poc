@@ -108,13 +108,10 @@ def server(
         )
     ):
         raise InputError("Runtime configuration points to missing local files")
-    if runtime and (
-        runtime.get("network_sandbox") != "macos"
-        or not Path("/usr/bin/sandbox-exec").is_file()
-    ):
-        raise InputError(
-            "Model execution requires the configured macOS network sandbox"
-        )
+    if runtime:
+        from .network_sandbox import verify_network_sandbox
+
+        verify_network_sandbox(runtime.get("network_sandbox"), runtime["python"])
     work_lock = threading.Lock()
     active = {"process": None, "status_file": None, "watcher": None}
     store_lock = (root / "server.lock").open("a")
@@ -162,7 +159,9 @@ def server(
         if not (path / "capture.bin").exists() or (path / "mesh.json").exists():
             raise InputError("Choose an unprocessed recording")
         if not work_lock.acquire(blocking=False):
-            raise InputError("別の撮影を処理中です。Mac保護のため1件ずつ実行します。")
+            raise InputError(
+                "別の撮影を処理中です。メモリ保護のため1件ずつ実行します。"
+            )
         process = None
         try:
             status_file = path / "reconstruction.json"
@@ -193,12 +192,9 @@ def server(
                     "--session",
                     identifier,
                 ]
-                command = [
-                    "/usr/bin/sandbox-exec",
-                    "-p",
-                    "(version 1)(allow default)(deny network*)",
-                    *command,
-                ]
+                from .network_sandbox import sandbox_command
+
+                command = sandbox_command(runtime["network_sandbox"], command)
                 process = subprocess.Popen(
                     command,
                     stdout=log,

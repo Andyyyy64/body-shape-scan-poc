@@ -21,9 +21,14 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser(
         "doctor",
-        help="Inspect the base environment and an optional external Mac runtime",
+        help="Inspect the base environment and an optional external model runtime",
     )
     p.add_argument("--runtime-config")
+    p = sub.add_parser(
+        "smoke-runtime", help="Verify offline SAM/MHR execution with synthetic pixels"
+    )
+    p.add_argument("--runtime-config", required=True)
+    p.add_argument("--out", required=True)
     for name in ("demo", "render-demo"):
         p = sub.add_parser(name, help="Run explicitly synthetic experiments")
         p.add_argument("--out", required=True)
@@ -111,6 +116,20 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--frames", type=int, default=16)
     p = sub.add_parser(
+        "setup-linux",
+        help="Set up WSL2/Linux with explicit CUDA or CPU and network isolation",
+    )
+    p.add_argument("--out", required=True)
+    p.add_argument("--device", choices=("cuda", "cpu"), required=True)
+    p.add_argument("--frames", type=int, default=16)
+    p.add_argument("--max-rss-mb", type=int, default=8192)
+    p.add_argument("--min-available-mb", type=int, default=2048)
+    p.add_argument(
+        "--dependencies-only",
+        action="store_true",
+        help="Verify dependencies and device without gated model weights",
+    )
+    p = sub.add_parser(
         "serve",
         help="Open a private loopback capture and canonical 3D comparison screen",
     )
@@ -136,6 +155,20 @@ def main() -> int:
             from .runtime_setup import setup
 
             result = setup(args.out, args.frames)
+        elif args.command == "setup-linux":
+            from .runtime_setup import prepare_linux, setup
+
+            result = (
+                prepare_linux(args.out, args.device)
+                if args.dependencies_only
+                else setup(
+                    args.out,
+                    args.frames,
+                    args.device,
+                    max_rss_mb=args.max_rss_mb,
+                    min_available_mb=args.min_available_mb,
+                )
+            )
         elif args.command == "serve":
             from .web import serve
 
@@ -143,6 +176,10 @@ def main() -> int:
                 raise InputError("Invalid local port")
             serve(args.data_root, args.port, args.runtime_config)
             return 0
+        elif args.command == "smoke-runtime":
+            from .runtime_smoke import smoke
+
+            result = smoke(args.runtime_config, args.out)
         elif args.command == "compare-meshes":
             from .mesh import compare_meshes
 
@@ -195,7 +232,7 @@ def main() -> int:
                     [
                         config["python"],
                         "-c",
-                        "import json,torch; print(json.dumps({'mps_available':torch.backends.mps.is_available()}))",
+                        "import json,torch; print(json.dumps({'mps_available':torch.backends.mps.is_available(), 'cuda_available':torch.cuda.is_available(), 'torch_version':torch.__version__, 'cuda_version':torch.version.cuda}))",
                     ],
                     capture_output=True,
                     text=True,
@@ -207,6 +244,20 @@ def main() -> int:
                     **json.loads(probe.stdout),
                     "network_sandbox": config.get("network_sandbox"),
                 }
+                from .network_sandbox import verify_network_sandbox
+
+                verify_network_sandbox(config.get("network_sandbox"), config["python"])
+                result["external_runtime"]["network_sandbox_verified"] = True
+                device = config["encoder_device"]
+                available = (
+                    device == "cpu"
+                    or device == "cuda"
+                    and result["external_runtime"]["cuda_available"]
+                    or device == "mps"
+                    and result["external_runtime"]["mps_available"]
+                )
+                if not present or not available:
+                    result["status"] = "fail"
         elif args.command in ("demo", "render-demo"):
             from .demo import render_demo, run_demo
 

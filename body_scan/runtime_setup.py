@@ -1,4 +1,4 @@
-"""Reproduce the tested Mac runtime from pinned official sources and local-only weights."""
+"""Reproduce Mac and Linux runtimes from pinned sources and local-only weights."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from .io import InputError, new_run, sha256, write_json
+from .network_sandbox import verify_network_sandbox
 
 # Immutable dependency revisions, not environment/user identifiers.
 SAM_COMMIT = "b5c765a0d89d789985e186d396315e7590887b94"
@@ -82,11 +83,93 @@ def patch_source(root: Path):
     return hashlib.sha256(b"".join((root / p).read_bytes() for p in edits)).hexdigest()
 
 
-def setup(output: str, frames: int = 16) -> dict:
-    if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").exists():
-        raise InputError(
-            "This model setup targets macOS with native process network isolation"
+def install_dependencies(root: Path, device: str) -> Path:
+    python = root / "venv/bin/python"
+    subprocess.run(["uv", "venv", "--python", "3.11", str(root / "venv")], check=True)
+    requirements = (
+        "runtime-requirements-linux-cu128.txt"
+        if sys.platform == "linux" and device == "cuda"
+        else "runtime-requirements.txt"
+    )
+    command = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        "-r",
+        str(Path(__file__).with_name(requirements)),
+    ]
+    if sys.platform == "linux":
+        command += ["--torch-backend", "cu128" if device == "cuda" else "cpu"]
+    subprocess.run(command, check=True)
+    return python
+
+
+def prepare_linux(output: str, device: str) -> dict:
+    if sys.platform != "linux" or device not in ("cuda", "cpu"):
+        raise InputError("Linux setup requires an explicit cuda or cpu device")
+    verify_network_sandbox("linux", sys.executable)
+    root = new_run(output)
+    python = install_dependencies(root, device)
+    subprocess.run(sandbox_probe_command(python, device), check=True)
+    result = {
+        "status": "dependencies_verified_models_not_installed",
+        "encoder_device": device,
+        "python": str(python),
+        "network_sandbox": "linux",
+        "runtime_packages": subprocess.check_output(
+            ["uv", "pip", "freeze", "--python", str(python)], text=True
+        ).splitlines(),
+    }
+    write_json(root / "preparation.json", result)
+    return result
+
+
+def sandbox_probe_command(python: Path, device: str) -> list[str]:
+    from .network_sandbox import sandbox_command
+
+    env_code = (
+        "import torch\n"
+        + (
+            "if not torch.cuda.is_available(): raise RuntimeError('CUDA unavailable; no fallback')\n"
+            if device == "cuda"
+            else ""
         )
+        + f"x=torch.ones(16,16,device='{device}')\n"
+        + "if (x@x).sum().item()!=4096: raise RuntimeError('Device kernel verification failed')\n"
+        + "print('Explicit runtime device kernel verified')\n"
+    )
+    return sandbox_command("linux", [str(python), "-c", env_code])
+
+
+def setup(
+    output: str,
+    frames: int = 16,
+    device: str = "mps",
+    *,
+    max_rss_mb: int | None = None,
+    min_available_mb: int | None = None,
+) -> dict:
+    if sys.platform == "darwin" and device in ("mps", "cpu"):
+        sandbox = "macos"
+    elif sys.platform == "linux" and device in ("cuda", "cpu"):
+        sandbox = "linux"
+    else:
+        raise InputError("Choose a supported explicit device for this operating system")
+    max_rss_mb = (
+        max_rss_mb if max_rss_mb is not None else (8192 if sandbox == "linux" else 6144)
+    )
+    min_available_mb = (
+        min_available_mb
+        if min_available_mb is not None
+        else (2048 if sandbox == "linux" else 1200)
+    )
+    if max_rss_mb < 1024 or min_available_mb < 512:
+        raise InputError(
+            "Set host RSS limit >=1024 MB and available-memory floor >=512 MB"
+        )
+    verify_network_sandbox(sandbox, sys.executable)
     if not 3 <= frames <= 64:
         raise InputError("Select 3..64 frames per recording")
     # Verify entitlement before creating or installing a runtime; no token is put in command arguments.
@@ -106,20 +189,9 @@ def setup(output: str, frames: int = 16) -> dict:
         check=True,
     )
     root = new_run(output)
-    python = root / "venv/bin/python"
-    subprocess.run(["uv", "venv", "--python", "3.11", str(root / "venv")], check=True)
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "-r",
-            str(Path(__file__).with_name("runtime-requirements.txt")),
-        ],
-        check=True,
-    )
+    python = install_dependencies(root, device)
+    if sandbox == "linux":
+        subprocess.run(sandbox_probe_command(python, device), check=True)
     model = root / "models/sam-3d-body-dinov3"
     subprocess.run(
         [
@@ -168,13 +240,14 @@ def setup(output: str, frames: int = 16) -> dict:
         "checkpoint": str(model / "model.ckpt"),
         "mhr_model": str(model / "assets/mhr_model.pt"),
         "segmentation_model": str(segmentation),
-        "encoder_device": "mps",
+        "encoder_device": device,
         "cpu_threads": 2,
         "sample_frames": frames,
-        "max_rss_mb": 6144,
-        "min_available_mb": 1200,
+        "max_rss_mb": max_rss_mb,
+        "min_available_mb": min_available_mb,
         "mps_memory_fraction": 0.5,
-        "network_sandbox": "macos",
+        "cuda_memory_fraction": 0.5,
+        "network_sandbox": sandbox,
         "pipeline_version": "fixed_pose_silhouette_fit.v1",
         "sam_commit": SAM_COMMIT,
         "dino_commit": DINO_COMMIT,

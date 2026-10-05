@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .io import InputError
+
 CAPTURE_PROTOCOL_ID = "relaxed_arms_down_full_torso.v1"
 
 # Detections other than the largest person must be small relative to it
@@ -108,4 +110,48 @@ def summarize_outcomes(outcomes: list[dict]) -> dict:
         "capture_protocol_id": CAPTURE_PROTOCOL_ID,
         "excluded_frames": sum(row["state"] != "estimated" for row in outcomes),
         "exclusion_reasons": dict(sorted(reasons.items())),
+    }
+
+
+def image_detail(image, mask):
+    """Contrast-normalized Laplacian energy at a fixed person image height.
+
+    This is a blur proxy, not a guarantee of observed anatomy or low noise.
+    No reconstructed geometry or renderer mask is accepted.
+    """
+    import cv2
+    import numpy as np
+
+    image, mask = np.asarray(image), np.asarray(mask, dtype=bool)
+    if (
+        image.ndim != 3
+        or image.shape[:2] != mask.shape
+        or image.shape[2] != 3
+        or not mask.any()
+    ):
+        raise InputError("Invalid image-detail observations")
+    yy, xx = np.where(mask)
+    low_y, high_y = max(0, yy.min() - 3), min(mask.shape[0], yy.max() + 4)
+    low_x, high_x = max(0, xx.min() - 3), min(mask.shape[1], xx.max() + 4)
+    gray = (
+        cv2.cvtColor(image[low_y:high_y, low_x:high_x], cv2.COLOR_BGR2GRAY).astype(
+            np.float32
+        )
+        / 255
+    )
+    height, width = gray.shape
+    resized = cv2.resize(
+        gray,
+        (max(16, round(width * 256 / height)), 256),
+        interpolation=cv2.INTER_AREA if height > 256 else cv2.INTER_LINEAR,
+    )
+    contrast = float(resized.var())
+    energy = float(cv2.Laplacian(resized, cv2.CV_32F, ksize=3).var()) / max(
+        contrast, 1e-6
+    )
+    return {
+        "edge_energy": energy,
+        "contrast_variance": contrast,
+        "person_height_px": int(np.ptp(yy) + 1),
+        "reference_height_px": 256,
     }

@@ -15,6 +15,7 @@ ALLOWED_ROOT = {
     "AGENTS.md",
     "body_scan/ui.html",
     "body_scan/runtime-requirements.txt",
+    "body_scan/runtime-requirements-linux-cu128.txt",
 }
 
 

@@ -5,6 +5,7 @@ A research project testing whether a fixed laptop RGB camera and a short self-ro
 **Primary question:** can independent captures detect a real 1 cm change in a defined abdominal or hip circumference, while keeping false change reports acceptably low?
 
 日本語の詳細な実験範囲は [PoC scope](docs/poc-scope.ja.md) を参照してください。
+撮影なしの自動検証は [合成動画の実験手順](docs/synthetic-lab.ja.md) を参照してください。
 
 ## Run on an Apple Silicon Mac
 
@@ -33,7 +34,21 @@ uv run body-scan render-demo --out "$HOME/body-scan-private/render-01"
 uv run python -m unittest discover -v
 ```
 
+The experimental measurement core adds optional SciPy curve fitting and Shapely silhouette geometry:
+`uv run --extra research python -m unittest tests.test_framewise_width -v`.
+RGB coverage tests also need the vision and Torch runtime. The core remains a
+research candidate; ordinary reconstruction integration and full precision
+validation are pending. Pose uncertainty is a bounded heuristic, not a calibrated
+physical confidence interval.
+
 ## Selected scope
+
+Windows/WSL2 with NVIDIA is supported by the explicit `setup-linux --device cuda`
+runtime path in this development branch. See
+[the Windows/WSL runbook](docs/windows-wsl.ja.md) for isolated dependency/device
+verification before gated model access and full runtime setup afterwards.
+An isolated SAM/MHR model smoke with synthetic pixels has passed on WSL;
+full-video contour reconstruction and same-video Mac comparison remain unverified.
 
 - **Primary device:** a laptop's built-in RGB camera. A fixed smartphone is a diagnostic comparator, not a substitute for laptop success.
 - **Primary framing:** head, shoulders and pelvis visible. Feet are not required; unobserved legs are not measured. Abdomen-only crops are outside the initial capture protocol.
@@ -80,6 +95,14 @@ Keep photographs, video, audio, masks, silhouettes, meshes, keypoints, body meas
 Dependencies' code, model weights, and datasets have separate terms. This repository grants no rights to third-party assets. No cloud uploads, paid compute, or additional participant recruitment are implicit in this plan.
 
 ## Current evidence
+
+An offline WSL/CUDA synthetic-video matrix ran 33 cases through the real
+16-frame detector/SAM/QC/contour-fit pipeline: 29 produced meshes and four
+were refused by frame QC. Known-change sensitivity did not meet the null
+margin, and the six distance captures had a maximum pair difference of 1.99%.
+Occlusion produced large erroneous dimensions without rejection. These are
+exploratory results for one procedurally rendered body, not human validation;
+the raw synthetic artifacts and all failed cases remain outside Git.
 
 The numerical, privacy, local API and synthetic-image tests are executable. On the development Mac, official SAM inference and the MHR full-parameter round trip were executed. The browser-to-video-to-SAM-to-canonical-mesh-to-comparison path was exercised with a public-reference-image test video. Repeated processing of that identical video produced identical geometry and was explicitly flagged as duplicate input.
 
