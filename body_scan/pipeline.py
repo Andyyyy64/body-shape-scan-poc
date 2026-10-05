@@ -66,6 +66,7 @@ def run(
     identifier: str,
     allow_synthetic: bool = False,
     research_options: str | None = None,
+    diagnostic_real: bool = False,
 ):
     from .web import session_path
 
@@ -101,9 +102,17 @@ def run(
             torso_mask_support,
         )
 
-        if research_options and source_kind != "synthetic":
+        if research_options and source_kind != "synthetic" and not diagnostic_real:
             raise InputError("Research variants require a synthetic experiment")
+        if diagnostic_real and (source_kind != "real" or not research_options):
+            raise InputError(
+                "Diagnostic real-video mode requires real recordings and explicit research options"
+            )
         research = options(read_json(research_options)) if research_options else {}
+        if diagnostic_real and "camera" in research:
+            raise InputError(
+                "Synthetic renderer intrinsics cannot be used for a real recording"
+            )
         method = method_id(research) if research_options else METHOD
         if not (session / "capture.bin").is_file():
             raise InputError("A saved video is required")
@@ -142,6 +151,7 @@ def run(
                             "error": "メモリ保護のため停止しました。原動画は保存されています。",
                             "peak_rss_mb": round(peak["rss_bytes"] / 1024**2),
                             "max_rss_mb": config["max_rss_mb"],
+                            "rss_limit_exceeded": rss > config["max_rss_mb"] * 1024**2,
                             "min_available_mb": config["min_available_mb"],
                         },
                     )
@@ -813,6 +823,12 @@ def run(
                     ],
                 },
             )
+        if diagnostic_real:
+            mesh.update(
+                diagnostic_only=True,
+                diagnostic_label="診断用",
+                adoption_validated=False,
+            )
         validate_mesh(mesh)
         if not profile_path.exists():
             write_json(profile_path, profile)
@@ -869,6 +885,11 @@ if __name__ == "__main__":
     parser.add_argument("--session", required=True)
     parser.add_argument("--allow-synthetic", action="store_true")
     parser.add_argument("--research-options")
+    parser.add_argument(
+        "--diagnostic-real",
+        action="store_true",
+        help="Explicit diagnostic-only research execution on real videos; requires --research-options",
+    )
     args = parser.parse_args()
     run(
         args.config,
@@ -876,4 +897,5 @@ if __name__ == "__main__":
         args.session,
         args.allow_synthetic,
         args.research_options,
+        args.diagnostic_real,
     )

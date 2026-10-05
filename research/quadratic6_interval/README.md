@@ -5,6 +5,14 @@ prototype. It preserves the quadratic six-control shape subspace and pixel
 interval likelihood, with its original adapters and dependencies. See
 [source hashes](SOURCE_SHA256.md). No new estimation method is introduced.
 
+The preserved best configuration is selected in that CLI with
+`--scale-camera --shape-profile quadratic --width-likelihood pixel-interval`.
+The `quadratic` branch delegates to `quadratic_shape_profile.fit_curve` with
+`restricted=True`: six Bernstein controls map into the original ten shape
+coefficients. The interval branch uses the existing observation normalizers
+through `shape_profile_polish.pixel_interval` and `pixel_interval_fit`.
+These are archived settings, not authorization to run another synthetic trial.
+
 The synthetic results are historical reference evidence. The previous synthetic
 gain, signed 10 mm and 375-comparison gates are not Issue 52 adoption criteria.
 This archive is not selected for the new real-video comparison: that comparison
