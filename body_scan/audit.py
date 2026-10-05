@@ -30,6 +30,13 @@ def allowed(path: str) -> bool:
         )
         or (len(p.parts) == 2 and p.parts[0] == "docs" and p.suffix == ".md")
         or (
+            p.parts[:2] == ("research", "quadratic6_interval")
+            and (
+                (len(p.parts) == 3 and p.name in {"README.md", "SOURCE_SHA256.md"})
+                or (len(p.parts) == 4 and p.parts[2] == "body_scan" and p.suffix == ".py")
+            )
+        )
+        or (
             len(p.parts) == 3
             and p.parts[:2] == (".github", "workflows")
             and p.suffix == ".yml"
