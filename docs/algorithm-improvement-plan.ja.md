@@ -1,5 +1,12 @@
 # 測定アルゴリズムの改善・実装計画（2026-10-03）
 
+> Publication status (2026-10-15): synthetic candidate exploration stopped on
+> 2026-10-06. This document preserves the historical plan and execution log.
+> The ±10, gain 0.8–1.2 and 375-pair targets below are reference values only.
+> The active acceptance criteria are the original Soma #52 criteria; the
+> [one-time real-video review](issue52-real-video-review.md) is prepared and
+> paused, with no real-video acceptance decision. Do not resume candidate search.
+
 目的は、輪郭残差を小さくすることではなく、同じ体型の再撮影を安定させつつ、
 既知の腹部変化を過小推定せず復元すること。既存の研究候補を対照に原因を分離する。
 この文書は実行中の計画。診断と候補の実装・探索を進めているが、最終採用条件はまだ未達。
