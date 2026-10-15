@@ -12,6 +12,7 @@ dependencies = []
 [project.optional-dependencies]
 vision = ["numpy>=2,<3", "opencv-python>=4.13,<5"]
 segmentation = ["ultralytics>=8.4,<9"]
+research = ["scipy>=1.14,<2", "shapely>=2,<3"]
 
 [project.scripts]
 body-scan = "body_scan.__main__:main"

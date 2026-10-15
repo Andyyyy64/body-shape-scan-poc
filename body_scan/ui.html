@@ -325,7 +325,7 @@
           <h1>Body Scan</h1>
           <div class="muted">回転撮影と3D比較 · ローカルPoC</div>
         </div>
-        <span class="badge">このMac内に保存</span>
+        <span class="badge">このPC内に保存</span>
       </header>
       <div class="notice" id="modelNotice">
         <strong>SAMによる3D復元は未接続です。</strong>
@@ -355,7 +355,14 @@
                 value="20"
                 min="5"
                 max="60" /></label
-            ><button id="record" class="primary" disabled>
+            ><label>検証の撮影枠<select id="captureSlot">
+              <option value="">通常の保存</option>
+              <option>normal_1</option><option>normal_2</option><option>normal_3</option>
+              <option>changed_1</option><option>changed_2</option><option>changed_3</option>
+              <option>distance_1.5_1</option><option>distance_1.5_2</option>
+              <option>distance_2.0_1</option><option>distance_2.0_2</option>
+              <option>distance_2.5_1</option><option>distance_2.5_2</option>
+            </select></label><button id="record" class="primary" disabled>
               5秒後に撮影開始</button
             ><button id="stop" disabled>停止</button
             ><button id="upload">既存の動画を保存</button
@@ -494,6 +501,8 @@
         samConfigured = false,
         pollTimer = null,
         playbackSelection = 0;
+      let captureRequest = { width: 1920, height: 1080, reason: "full_hd_requested" };
+      let activeCaptureRequest = captureRequest;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       async function api(path, options = {}) {
         const response = await fetch(path, {
@@ -522,19 +531,24 @@
         $("stop").disabled = !["countdown", "recording"].includes(next);
         $("upload").disabled = busy;
         $("duration").disabled = busy;
+        $("captureSlot").disabled = busy;
         if (message) $("status").textContent = message;
       }
       async function prepare() {
+        await refresh();
         state("preparing", "カメラの許可を確認しています…");
         try {
           if (stream) stream.getTracks().forEach((t) => t.stop());
+          activeCaptureRequest = { ...captureRequest };
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video:
-              $("cameraDevice").value &&
-              $("cameraDevice").value !== "カメラ未選択"
+            video: {
+              width: { ideal: activeCaptureRequest.width },
+              height: { ideal: activeCaptureRequest.height },
+              ...($("cameraDevice").value && $("cameraDevice").value !== "カメラ未選択"
                 ? { deviceId: { exact: $("cameraDevice").value } }
-                : true,
+                : {}),
+            },
           });
           $("camera").srcObject = stream;
           $("camera").hidden = false;
@@ -550,7 +564,7 @@
             .getSettings().deviceId;
           state(
             "ready",
-            "準備できました。カメラの機種と映る範囲を確認してください。",
+            `準備できました。要求 ${captureRequest.width}×${captureRequest.height}、実際 ${stream.getVideoTracks()[0].getSettings().width}×${stream.getVideoTracks()[0].getSettings().height}。頭から腰が映る範囲を確認してください。`,
           );
         } catch {
           stream = null;
@@ -558,7 +572,7 @@
           $("cameraHint").hidden = false;
           state(
             "idle",
-            "カメラを開けません。ブラウザとmacOSのカメラ許可を確認してください。",
+            "カメラを開けません。ブラウザとOSのカメラ許可を確認してください。",
           );
         }
       }
@@ -577,7 +591,9 @@
           throw Error("動画は64 MiB以下にしてください");
         const response = await api("/api/captures", {
           method: "POST",
-          headers: { "Content-Type": blob.type, "X-Capture-Source": source },
+          headers: { "Content-Type": blob.type, "X-Capture-Source": source,
+            "X-Capture-Label": $("captureSlot").value,
+            ...(source === "camera" ? {"X-Capture-Settings": JSON.stringify({requested: activeCaptureRequest, actual: stream.getVideoTracks()[0].getSettings()})} : {}) },
           body: blob,
         });
         const saved = await response.json();
@@ -630,7 +646,7 @@
           recorder.onstop = async () => {
             clearInterval(timer);
             clearTimeout(timeout);
-            state("saving", "このMacへ保存しています…");
+            state("saving", "このPCへ保存しています…");
             const recorded = new Blob(chunks, { type: recorder.mimeType });
             try {
               if (recordingFailed) throw Error("録画が中断されました");
@@ -668,7 +684,7 @@
       $("videoFile").onchange = async () => {
         const file = $("videoFile").files[0];
         if (!file) return;
-        state("saving", "動画をこのMacへ保存しています…");
+        state("saving", "動画をこのPCへ保存しています…");
         try {
           await uploadVideo(file, "file");
           state(
@@ -682,13 +698,18 @@
       };
       async function refresh() {
         try {
-          const { sessions, sam_state } = await (
+          const { sessions, sam_state, capture_request } = await (
             await api("/api/sessions")
           ).json();
+          if (capture_request) captureRequest = capture_request;
           samConfigured = sam_state === "configured";
+          if (sam_state === "capture_only") {
+            $("modelNotice").textContent = "#52 撮影専用：通常3本・既知変化3本・距離別6本を保存します。12本を確定後、同じ原動画を既定v1と10/3候補（診断用）で一度だけ処理します。";
+            $("demo").disabled = true;
+          }
           if (samConfigured)
             $("modelNotice").textContent =
-              "SAM 3D BodyをこのMacで実行できます。撮影の「3Dに復元」で開始してください。各方向の形状推定を集約するPoCで、実測精度は未検証です。";
+              "SAM 3D BodyをこのPCで実行できます。撮影の「3Dに復元」で開始してください。各方向の形状推定を集約するPoCで、実測精度は未検証です。";
           clearTimeout(pollTimer);
           if (sessions.some((s) => s.reconstruction?.state === "running"))
             pollTimer = setTimeout(refresh, 2500);

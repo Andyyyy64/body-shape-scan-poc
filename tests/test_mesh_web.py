@@ -7,7 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from body_scan.io import read_json
+from body_scan.io import read_json, replace_json
 from body_scan.mesh import (
     compare_meshes,
     section_perimeter,
@@ -199,6 +199,86 @@ class WebTests(unittest.TestCase):
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
         self.assertNotIn(str(self.root).encode(), body)
+
+    def test_capture_dimensions_and_issue52_slot_are_saved(self):
+        settings = {
+            "requested": {"width": 1920, "height": 1080},
+            "actual": {"width": 1280, "height": 720, "deviceId": "not-saved"},
+        }
+        payload = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 32
+        status, body, _ = self.request(
+            "POST",
+            "/api/captures",
+            payload,
+            {
+                "Content-Type": "video/mp4",
+                "X-Capture-Source": "camera",
+                "X-Capture-Label": "normal_1",
+                "X-Capture-Settings": json.dumps(settings),
+            },
+        )
+        self.assertEqual(status, 201)
+        identifier = json.loads(body)["id"]
+        meta = read_json(self.root / identifier / "session.json")
+        self.assertEqual(meta["issue52_slot"], "normal_1")
+        self.assertEqual(
+            meta["capture_settings"]["actual"], {"width": 1280, "height": 720}
+        )
+        self.assertEqual(meta["capture_settings"]["requested"], settings["requested"])
+        self.assertEqual(
+            meta["capture_settings"]["request_reason"], "full_hd_requested"
+        )
+        self.assertEqual(
+            self.request(
+                "POST",
+                "/api/captures",
+                payload,
+                {
+                    "Content-Type": "video/mp4",
+                    "X-Capture-Label": "bogus",
+                },
+            )[0],
+            400,
+        )
+        self.assertEqual(len(sessions(self.root)), 1)
+
+    def test_review_ui_is_capture_only_and_reads_external_resolution_fallback(self):
+        self.http.shutdown()
+        self.http.server_close()
+        self.thread.join(timeout=2)
+        replace_json(
+            self.root / "store.json",
+            {
+                "schema_version": "private_scan_store.v1",
+                "issue52_capture_only": True,
+            },
+        )
+        self.http = server(self.root)
+        self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = f"http://127.0.0.1:{self.http.server_port}"
+        _, body, _ = self.request("GET", "/")
+        self.token = (
+            re.search(rb'const TOKEN\s*=\s*"([A-Za-z0-9_-]+)"', body).group(1).decode()
+        )
+        self.assertEqual(
+            json.loads(self.request("GET", "/api/sessions")[1])["sam_state"],
+            "capture_only",
+        )
+        self.assertEqual(self.request("POST", "/api/demo", b"")[0], 400)
+        self.assertEqual(
+            self.request("POST", "/api/reconstruct", b'{"id":"invalid"}')[0], 400
+        )
+        replace_json(
+            self.root / "capture-resolution.json",
+            {
+                "width": 1280,
+                "height": 720,
+                "reason": "rss_limit_8192_mib_exceeded",
+            },
+        )
+        request = json.loads(self.request("GET", "/api/sessions")[1])["capture_request"]
+        self.assertEqual((request["width"], request["height"]), (1280, 720))
 
 
 class AdditionalContracts(unittest.TestCase):

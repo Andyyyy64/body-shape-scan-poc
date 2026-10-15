@@ -23,6 +23,41 @@ MAX_UPLOAD = 64 * 1024 * 1024
 SESSION_ID = re.compile(r"[a-f0-9]{32}")
 
 
+def capture_resolution(root: Path) -> dict:
+    path = root / "capture-resolution.json"
+    if path.exists():
+        state = read_json(path)
+        if (state.get("width"), state.get("height"), state.get("reason")) == (
+            1280,
+            720,
+            "rss_limit_8192_mib_exceeded",
+        ):
+            return {key: state[key] for key in ("width", "height", "reason")}
+    return {"width": 1920, "height": 1080, "reason": "full_hd_requested"}
+
+
+def record_resolution_fallback(root: Path, identifier: str, state: dict) -> bool:
+    if not (
+        state.get("stage") == "resource_guard"
+        and state.get("rss_limit_exceeded") is True
+        and state.get("max_rss_mb") == 8192
+    ):
+        return False
+    replace_json(
+        root / "capture-resolution.json",
+        {
+            "width": 1280,
+            "height": 720,
+            "reason": "rss_limit_8192_mib_exceeded",
+            "trigger_session": identifier,
+            "peak_rss_mb": state.get("peak_rss_mb"),
+            "recorded_at": time.time(),
+            "original_video_preserved": True,
+        },
+    )
+    return True
+
+
 def store_root(path: str) -> Path:
     root = private_path(path)
     marker = root / "store.json"
@@ -95,6 +130,7 @@ def server(
     root: Path, port: int = 0, runtime_config: str | None = None
 ) -> ThreadingHTTPServer:
     token = secrets.token_urlsafe(32)
+    capture_only = read_json(root / "store.json").get("issue52_capture_only") is True
     runtime = read_json(runtime_config) if runtime_config else None
     if runtime and any(
         not Path(runtime[k]).exists()
@@ -108,15 +144,13 @@ def server(
         )
     ):
         raise InputError("Runtime configuration points to missing local files")
-    if runtime and (
-        runtime.get("network_sandbox") != "macos"
-        or not Path("/usr/bin/sandbox-exec").is_file()
-    ):
-        raise InputError(
-            "Model execution requires the configured macOS network sandbox"
-        )
+    if runtime:
+        from .network_sandbox import verify_network_sandbox
+
+        verify_network_sandbox(runtime.get("network_sandbox"), runtime["python"])
     work_lock = threading.Lock()
     active = {"process": None, "status_file": None, "watcher": None}
+    capture_request = capture_resolution(root)
     store_lock = (root / "server.lock").open("a")
     (root / "server.lock").chmod(0o600)
     try:
@@ -156,13 +190,19 @@ def server(
             store_lock.close()
 
     def launch(identifier):
+        if capture_only:
+            raise InputError(
+                "This review store is capture-only; bind all twelve inputs before the one-time review"
+            )
         path = session_path(root, identifier)
         if not runtime:
             raise InputError("SAM runtime is not configured")
         if not (path / "capture.bin").exists() or (path / "mesh.json").exists():
             raise InputError("Choose an unprocessed recording")
         if not work_lock.acquire(blocking=False):
-            raise InputError("別の撮影を処理中です。Mac保護のため1件ずつ実行します。")
+            raise InputError(
+                "別の撮影を処理中です。メモリ保護のため1件ずつ実行します。"
+            )
         process = None
         try:
             status_file = path / "reconstruction.json"
@@ -193,12 +233,9 @@ def server(
                     "--session",
                     identifier,
                 ]
-                command = [
-                    "/usr/bin/sandbox-exec",
-                    "-p",
-                    "(version 1)(allow default)(deny network*)",
-                    *command,
-                ]
+                from .network_sandbox import sandbox_command
+
+                command = sandbox_command(runtime["network_sandbox"], command)
                 process = subprocess.Popen(
                     command,
                     stdout=log,
@@ -211,6 +248,8 @@ def server(
                 code = process.wait()
                 try:
                     state = read_json(status_file)
+                    if record_resolution_fallback(root, identifier, state):
+                        capture_request.update(capture_resolution(root))
                     if state.get("state") == "running":
                         replace_json(
                             status_file,
@@ -290,11 +329,15 @@ def server(
                     self.respond(403, {"error": "Authorization required"})
                     return
                 if route == "/api/sessions":
+                    capture_request.update(capture_resolution(root))
                     self.respond(
                         200,
                         {
                             "sessions": sessions(root),
-                            "sam_state": "configured"
+                            "capture_request": capture_request,
+                            "sam_state": "capture_only"
+                            if capture_only
+                            else "configured"
                             if runtime_config
                             else "not_connected",
                         },
@@ -346,6 +389,10 @@ def server(
                     self.respond(202, {"state": "running"})
                     return
                 if route == "/api/demo":
+                    if capture_only:
+                        raise InputError(
+                            "Synthetic demos are disabled in this real-video review store"
+                        )
                     self.respond(201, {"ids": demo_sessions(root)})
                     return
                 if route == "/api/captures":
@@ -362,6 +409,31 @@ def server(
                             "Expected a browser-recorded MP4 or WebM video"
                         )
                     identifier = uuid.uuid4().hex
+                    capture_settings = None
+                    if self.headers.get("X-Capture-Settings"):
+                        raw_settings = self.headers["X-Capture-Settings"]
+                        if len(raw_settings) > 2048:
+                            raise InputError("Invalid capture settings")
+                        settings = json.loads(raw_settings)
+                        capture_settings = {}
+                        for key in ["requested", "actual"]:
+                            dimensions = settings[key]
+                            if not all(
+                                type(dimensions[k]) is int
+                                and 1 <= dimensions[k] <= 8192
+                                for k in ["width", "height"]
+                            ):
+                                raise InputError("Invalid capture dimensions")
+                            capture_settings[key] = {
+                                k: dimensions[k] for k in ["width", "height"]
+                            }
+                        capture_settings["request_reason"] = capture_request["reason"]
+                    recording_label = self.headers.get("X-Capture-Label", "")
+                    if recording_label and not re.fullmatch(
+                        r"(?:normal|changed)_[123]|distance_(?:1\.5|2\.0|2\.5)_[12]",
+                        recording_label,
+                    ):
+                        raise InputError("Invalid Issue 52 recording slot")
                     path = new_run(root / identifier)
                     with (path / "capture.bin").open("xb") as handle:
                         (path / "capture.bin").chmod(0o600)
@@ -378,6 +450,19 @@ def server(
                             "media_type": media_type,
                             "video_sha256": hashlib.sha256(body).hexdigest(),
                             "state": "recorded_not_reconstructed",
+                            **(
+                                {"capture_settings": capture_settings}
+                                if capture_settings
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "issue52_slot": recording_label,
+                                    "label": recording_label,
+                                }
+                                if recording_label
+                                else {}
+                            ),
                         },
                     )
                     self.respond(
